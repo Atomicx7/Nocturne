@@ -209,11 +209,13 @@ async function ensurePresetBuffer(p, setP){
 
 /* ---------- build ---------- */
 async function buildTilesForCurrent(){
+  abortRunForChartUpdate();
+  showOverlay('Loading track', currentPreset?.title || customName || 'Preparing song', 'Preparing audio…');
   const row = $('#analyzeRow');
   row.style.display = 'flex';
   const setP = (f, txt)=>{
     $('#analyzeBar').style.width = Math.round(f*100)+'%';
-    if(txt) $('#analyzeText').textContent = txt;
+    if(txt){ $('#analyzeText').textContent = txt; overlayDesc.textContent = txt; }
   };
   setP(0.05, 'Preparing…');
   await new Promise(r=>setTimeout(r, 60));
@@ -399,7 +401,7 @@ function tryHit(lane){
   if(!best){
     laneFlash[lane]=Math.max(laneFlash[lane],0.7);
     if(hudGrade){ hudGrade.textContent='MISS'; hudGrade.style.color='#ff6b7a'; }
-    if(currentMode==='arcade'){ score=Math.max(0,score-20); combo=0; updateHud(); spawnFeedback(lane,'−20','#ff6b7a'); }
+    if(currentMode==='arcade'){ score=Math.max(0,score-5); combo=0; updateHud(); spawnFeedback(lane,'−5','#ff6b7a'); }
     else if(currentMode==='classic'){ combo=0; updateHud(); }
     return;
   }
@@ -446,7 +448,7 @@ function releaseHold(lane){
     } else {
       combo=0; miss++;
       if(currentMode==='classic'){ t.holding=false; endGame(true); return; }
-      if(currentMode==='arcade') score=Math.max(0,score-30);
+      if(currentMode==='arcade') score=Math.max(0,score-12);
       spawnFeedback(lane,'EARLY','#e14b6a');
     }
     t.holding=false;
@@ -584,8 +586,7 @@ function draw(now=0){
   }
 
   const cur = getCurrentTime();
-  // A longer visual runway makes the timing readable; it does not alter the
-  // chart clock or audio tempo, so beats stay locked to the strike line.
+  // Screen-linear travel keeps the established, readable game cadence.
   const basePps = {easy:285, normal:355, hard:430}[difficultySel.value] || 355;
   const pps = basePps*dpr;
   const gap = Math.max(2*dpr, w*0.006);
@@ -593,11 +594,12 @@ function draw(now=0){
   // luminous glass tiles ride their lane's projection down into its key
   for(const t of activeTiles){
     if((t.hit && t.type==='tap') || t.missed) continue;
-    const yH = g.keyTop - (t.time-cur)*pps;
-    // Scale tap length with lane width so it keeps a natural proportion
-    // throughout the 3D runway instead of appearing to shrink near the keys.
-    const tapLength = Math.max(150*dpr, pps*0.42) * g.spread(yH);
-    const lh = t.type==='hold' ? (t.duration||0.5)*pps : tapLength;
+    const toHit = t.time-cur;
+    const yH = g.keyTop - toHit*pps;
+    // Constant tap length: scaling length with lane spread made far tiles
+    // short and near tiles long, so tails visibly sped up and caught up.
+    // Lane widths still taper with perspective; only length stays fixed.
+    const lh = t.type==='hold' ? (t.duration||0.5)*pps : Math.max(150*dpr, pps*0.42);
     const yT = yH-lh;
     if(yH < -160*dpr || yT > h+80*dpr) continue;
     const hx0=g.center(t.lane,yH)-g.half(yH)+gap, hx1=g.center(t.lane,yH)+g.half(yH)-gap;
@@ -605,21 +607,20 @@ function draw(now=0){
     // contact shadow for 3D depth
     ctx.fillStyle='rgba(0,0,0,.45)';
     quad(hx0+4*dpr,yH+7*dpr,hx1+4*dpr,yH+7*dpr,tx1+4*dpr,yT+7*dpr,tx0+4*dpr,yT+7*dpr); ctx.fill();
-    const toHit = t.time-cur;
     ctx.save();
     if(!t.hit && toHit>0 && toHit<0.25){
       ctx.shadowColor='rgba(240,200,120,.9)'; ctx.shadowBlur=18*dpr*(1-toHit/0.25);
     }
     const tg=ctx.createLinearGradient(0,yT,0,yH);
     if(t.type==='hold'){
-      tg.addColorStop(0,'rgba(206,170,120,.55)'); tg.addColorStop(1,'rgba(255,244,214,.94)');
+      tg.addColorStop(0,'rgba(91,67,145,.82)'); tg.addColorStop(.55,'rgba(151,115,218,.92)'); tg.addColorStop(1,'#ead8ff');
     } else {
       tg.addColorStop(0,'rgba(188,158,108,.88)'); tg.addColorStop(0.45,'rgba(240,220,175,.96)'); tg.addColorStop(1,'#fff8e2');
     }
     ctx.fillStyle=tg;
     quad(hx0,yH,hx1,yH,tx1,yT,tx0,yT); ctx.fill();
     ctx.restore();
-    ctx.strokeStyle = t.type==='hold' ? 'rgba(255,240,200,.9)' : 'rgba(216,180,106,.75)';
+    ctx.strokeStyle = t.type==='hold' ? 'rgba(226,205,255,.98)' : 'rgba(216,180,106,.75)';
     ctx.lineWidth = 1.5*dpr;
     quad(hx0,yH,hx1,yH,tx1,yT,tx0,yT); ctx.stroke();
     // bright strike edge where the tile will meet its key
@@ -629,11 +630,14 @@ function draw(now=0){
     ctx.fillStyle='rgba(255,255,255,.10)';
     quad(hx0,yH,hx0+(hx1-hx0)*0.34,yH,tx0+(tx1-tx0)*0.22,yT,tx0,yT); ctx.fill();
     if(t.type==='hold'){
-      ctx.strokeStyle='rgba(255,250,230,.85)';
-      ctx.lineWidth=Math.max(2*dpr,(hx1-hx0)*0.10);
+      ctx.strokeStyle='rgba(255,255,255,.9)';
+      ctx.lineWidth=Math.max(2*dpr,(hx1-hx0)*0.055);
       ctx.beginPath();
       ctx.moveTo((hx0+hx1)/2,yH-8*dpr); ctx.lineTo((tx0+tx1)/2,yT+8*dpr);
       ctx.stroke();
+      ctx.fillStyle='rgba(255,255,255,.86)';
+      ctx.font=`700 ${Math.max(8,10*dpr)}px Inter, sans-serif`; ctx.textAlign='center';
+      ctx.fillText('HOLD', (hx0+hx1)/2, yH-(yH-yT)*0.32);
     }
   }
   for(let i=particles.length-1;i>=0;i--){
@@ -704,7 +708,7 @@ function loop(){
       t.missed=true; miss++; combo=0; laneFlash[t.lane]=Math.max(laneFlash[t.lane],0.8); updateHud();
       if(hudGrade){ hudGrade.textContent='MISS'; hudGrade.style.color='#ff6b7a'; }
       if(currentMode==='classic'){ spawnFeedback(t.lane,'MISS','#ff6b7a'); endGame(true); return; }
-      if(currentMode==='arcade'){ score=Math.max(0,score-30); spawnFeedback(t.lane,'−30','#ff6b7a'); updateHud(); }
+      if(currentMode==='arcade'){ score=Math.max(0,score-10); spawnFeedback(t.lane,'−10','#ff6b7a'); updateHud(); }
       else spawnFeedback(t.lane,'MISS','#c9a0a6');
     }
   }
@@ -877,6 +881,14 @@ function paintThemeBtn(){
   const icon = isDark() ? '☾' : '☀';
   if(btnTheme) btnTheme.textContent = icon;
   if(btnMobileTheme) btnMobileTheme.textContent = icon;
+}
+function abortRunForChartUpdate(){
+  if(!isPlaying && !isPaused) return;
+  isPlaying=false; isPaused=false; pauseOffset=0;
+  stopAudio();
+  if(loopRaf) cancelAnimationFrame(loopRaf);
+  $('#btnPause').style.display='none';
+  $('#btnPlay').style.display='inline-block';
 }
 if(btnTheme) btnTheme.onclick = ()=>{
   const next = isDark() ? 'light' : 'dark';
