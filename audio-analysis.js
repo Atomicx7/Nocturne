@@ -26,17 +26,16 @@
   var FRAME = 2048;
   var HOP = 512;
   var MIN_ONSET_GAP = 0.08;      // 80ms minimum onset separation
-  var MAX_QUANT_ERR = 0.10;      // 100ms max snap distance
+  var MAX_QUANT_ERR = 0.055;     // preserve the audible onset; avoid loose beat snaps
   var BPM_MIN = 60, BPM_MAX = 200;
 
-  // dbl/dblDense/tpl/tplDense: energy-driven chord probabilities.
-  // pThr: event power needed before doubles are considered at all.
-  // Triples additionally require a downbeat + very high power. Never 4 lanes.
+  // pThr: event power needed before a cross-hand double is considered.
+  // The game intentionally caps simultaneous notes at two.
   var DIFF = {
-    easy:   { maxRate: 1.75, minGap: 0.35, subs: { '1': 1 },                    dbl: 0.08, dblDense: 0.08, tpl: 0,    tplDense: 0,    pThr: 0.62 },
-    normal: { maxRate: 2.75, minGap: 0.22, subs: { '1': 1, '1/2': 1 },           dbl: 0.18, dblDense: 0.36, tpl: 0.14, tplDense: 0.25, pThr: 0.50 },
-    hard:   { maxRate: 3.75, minGap: 0.15, subs: { '1': 1, '1/2': 1, '1/4': 1 }, dbl: 0.18, dblDense: 0.36, tpl: 0.15, tplDense: 0.30, pThr: 0.42 },
-    insane: { maxRate: 5.0,  minGap: 0.10, subs: { '1': 1, '1/2': 1, '1/4': 1 }, dbl: 0.22, dblDense: 0.38, tpl: 0.18, tplDense: 0.32, pThr: 0.35 }
+    easy:   { maxRate: 1.35, minGap: 0.42, subs: { '1': 1 },                    dbl: 0.06, dblDense: 0.05, pThr: 0.66 },
+    normal: { maxRate: 1.90, minGap: 0.30, subs: { '1': 1, '1/2': 1 },           dbl: 0.13, dblDense: 0.18, pThr: 0.57 },
+    hard:   { maxRate: 2.55, minGap: 0.22, subs: { '1': 1, '1/2': 1, '1/4': 1 }, dbl: 0.16, dblDense: 0.22, pThr: 0.48 },
+    insane: { maxRate: 3.0,  minGap: 0.18, subs: { '1': 1, '1/2': 1, '1/4': 1 }, dbl: 0.18, dblDense: 0.24, pThr: 0.45 }
   };
 
   /* ---------- utils ---------- */
@@ -419,17 +418,12 @@
   }
 
   /* ---------- step 8: polyphonic composer ----------
-     Turns each musical event into 1-3 lanes. Chord probability is driven by
-     the event's own energy (strength + simultaneous voices + local density),
-     never by blind duplication: quiet sections stay sparse, dense sections
-     bloom into doubles and occasional triples. Lane shapes carry pattern
-     memory (runs, alternation, hand changes) so sequences feel intentional. */
+     Turns each musical event into one or two lanes. Chord probability is
+     driven by energy; pairs remain cross-hand and never exceed two tiles. */
   // Hands: D,F (lanes 0,1) = left hand · J,K (lanes 2,3) = right hand.
   // HARD RULE: no simultaneous pair may sit on one hand — D+F and J+K
   // pairs are unplayable. Cross-hand pairs only (D+J, F+K, F+J, K+D).
-  // Triples always span both hands, so any 3-lane shape is legal.
   var PAIRS = [[0, 2], [1, 3], [1, 2], [0, 3]];
-  var TRIPLES = [[0, 1, 2], [1, 2, 3], [0, 1, 3], [0, 2, 3]]; // never all 4
   function sameHand(a, b) { return (a < 2) === (b < 2); }
 
   function walkLane(rng, mem, gapPrev) {
@@ -509,18 +503,12 @@
       var power = 0.7 * ev._rank + 0.2 * Math.min(1, (ev.count - 1) / 2) +
         (ev.downbeat ? 0.15 : 0);
 
-      // how many lanes does this musical moment deserve?
-      // triples live on strong downbeats (bar starts) and the hottest dense
-      // peaks — never twice in a row, never 4 lanes.
-      var tripleP = (sig && power > 0.62 && (ev.downbeat || density > 0.6))
-        ? cfg.tpl + cfg.tplDense * density : 0;
-      if (mem.prevCount === 3) tripleP = 0; // never two triples in a row
+      // A musical moment gets either one note or one cross-hand pair.
       var doubleP = (sig && power > cfg.pThr)
         ? cfg.dbl + cfg.dblDense * density + (ev.downbeat ? 0.18 : 0)
         : 0;
       if (mem.prevCount >= 2) doubleP *= 0.45; // break chord runs: chord-single-chord
-      var roll = rng();
-      var n = roll < tripleP ? 3 : (roll < tripleP + doubleP ? 2 : 1);
+      var n = rng() < Math.min(0.55, doubleP) ? 2 : 1;
 
       // soft tile rate cap: shrink chords, never erase rhythm
       var recent = 0;
@@ -542,15 +530,6 @@
         lanes = [melody].concat(pick.filter(function (l) { return l !== melody; }));
         if (lanes.length < 2) lanes = pick.slice();
         mem.lastPair = pairKey(lanes.slice(0, 2).sort());
-      } else {
-        var tops = TRIPLES.filter(function (t) { return t.indexOf(melody) >= 0; });
-        var key = tops.length ? tops.map(function (t) { return t.join('+'); }) : [];
-        key = key.filter(function (kk) { return kk !== mem.lastTriple; });
-        if (!key.length) key = TRIPLES.map(function (t) { return t.join('+'); });
-        var shape = key[Math.floor(rng() * key.length)].split('+').map(Number);
-        lanes = [melody].concat(shape.filter(function (l) { return l !== melody; }));
-        mem.lastTriple = shape.join('+');
-        mem.lastPair = null;
       }
       if (n === 1) mem.lastPair = null;
       mem.lane = melody;
@@ -592,7 +571,7 @@
 
   /* ---------- step 9: validate + repair (polyphony-aware) ----------
      Same timestamp in DIFFERENT lanes is legal gameplay (chords).
-     Only same-lane duplicates and >3 simultaneous stacks are repaired. */
+   Only same-lane duplicates and >2 simultaneous stacks are repaired. */
   function simultaneousRun(tiles, i) {
     var run = [i];
     for (var j = i + 1; j < tiles.length; j++) {
@@ -615,7 +594,7 @@
     });
     // repair: same timestamp in the SAME lane is a duplicate (drop weaker).
     // Same timestamp in DIFFERENT lanes is a chord — always legal.
-    // More than 3 simultaneous lanes is impossible — drop the weakest.
+    // More than two simultaneous lanes is never allowed — drop the weakest.
     var i = 1;
     while (i < fixed.length) {
       var stack = simultaneousRun(fixed, i - 1);
@@ -630,9 +609,9 @@
           } else seen[L] = stack[r];
         }
         var live = stack.filter(function (idx) { return drop.indexOf(idx) < 0; });
-        if (live.length > 3) {
+        if (live.length > 2) {
           live.sort(function (a, b) { return (fixed[b].str || 0) - (fixed[a].str || 0); });
-          var cut = live.slice(3);
+          var cut = live.slice(2);
           errors.push('repair ' + live.length + '-stack @' + fixed[live[0]].time.toFixed(3));
           drop = drop.concat(cut);
         }

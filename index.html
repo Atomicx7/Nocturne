@@ -50,6 +50,19 @@
     <div class="trackline"><div id="progBar"></div></div>
     <div class="trackmeta"><span id="progText">0 / 0 seconds</span><span id="detectLabel"></span></div>
 
+    <div class="board-toolbar board-toolbar-top">
+      <div class="seg" id="modeSeg">
+        <button class="seg-btn active" data-mode="classic">Classic</button>
+        <button class="seg-btn" data-mode="arcade">Arcade</button>
+        <button class="seg-btn" data-mode="zen">Zen</button>
+      </div>
+      <div class="board-btns">
+        <button id="btnRestart" class="mini-btn">Restart</button>
+        <button id="btnPause" class="mini-btn" style="display:none">Pause</button>
+        <button id="btnPlay" class="mini-btn accent">Play</button>
+      </div>
+    </div>
+
     <div class="game-outer">
       <div class="game-frame" id="gameFrame">
         <canvas id="gameCanvas"></canvas>
@@ -67,18 +80,6 @@
       </div>
     </div>
 
-    <div class="board-toolbar">
-      <div class="seg" id="modeSeg">
-        <button class="seg-btn active" data-mode="classic">Classic</button>
-        <button class="seg-btn" data-mode="arcade">Arcade</button>
-        <button class="seg-btn" data-mode="zen">Zen</button>
-      </div>
-      <div class="board-btns">
-        <button id="btnRestart" class="mini-btn">Restart</button>
-        <button id="btnPause" class="mini-btn" style="display:none">Pause</button>
-        <button id="btnPlay" class="mini-btn accent">Play</button>
-      </div>
-    </div>
     <p class="board-foot">TAP THE TILES OR USE D F J K</p>
   </section>
 

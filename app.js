@@ -339,8 +339,11 @@ function startAudio(){
     audioSource.buffer = customAudioBuffer;
     audioSource.playbackRate.value = level().rate;
     audioSource.connect(ac.destination);
-    startTime = ac.currentTime - pauseOffset + 0.02;
-    try{ audioSource.start(0, Math.max(0,pauseOffset * level().rate)); }catch(e){ audioSource.start(0); }
+    // Start audio and chart from the same scheduled audio-clock instant.
+    // This removes the old fixed 20ms drift between an audible beat and tile.
+    const launchAt = ac.currentTime + 0.06;
+    startTime = launchAt - pauseOffset;
+    try{ audioSource.start(launchAt, Math.max(0,pauseOffset * level().rate)); }catch(e){ audioSource.start(); }
     audioSource.onended = ()=>{ if(isPlaying && !isPaused) endGame(false); };
   } else {
     presetStartPerf = performance.now() - pauseOffset*1000;
@@ -457,8 +460,8 @@ function spawnParticles(lane, grade){
   const g = stageGeom(canvas.width, canvas.height);
   const x=g.center(lane, g.keyTop), y=g.keyTop-6;
   const cols = grade==='perfect' ? ['#f0d9a8','#d8b46a','#fff6e0'] : ['#d8b46a','#8f887a','#f0d9a8'];
-  for(let i=0;i<9;i++) particles.push({x, y, vx:(Math.random()-0.5)*260, vy:-Math.random()*300-50,
-    life:0.35+Math.random()*0.3, t:0, col:cols[i%3], s:1.6+Math.random()*2.2});
+  for(let i=0;i<14;i++) particles.push({x, y, vx:(Math.random()-0.5)*310, vy:-Math.random()*330-55,
+    life:0.42+Math.random()*0.34, t:0, col:cols[i%3], s:1.6+Math.random()*2.6});
 }
 function spawnFeedback(lane, text, col){
   const g = stageGeom(canvas.width, canvas.height);
@@ -581,7 +584,9 @@ function draw(now=0){
   }
 
   const cur = getCurrentTime();
-  const basePps = {easy:430, normal:560, hard:660}[difficultySel.value] || 560;
+  // A longer visual runway makes the timing readable; it does not alter the
+  // chart clock or audio tempo, so beats stay locked to the strike line.
+  const basePps = {easy:285, normal:355, hard:430}[difficultySel.value] || 355;
   const pps = basePps*dpr;
   const gap = Math.max(2*dpr, w*0.006);
 
@@ -589,7 +594,7 @@ function draw(now=0){
   for(const t of activeTiles){
     if((t.hit && t.type==='tap') || t.missed) continue;
     const yH = g.keyTop - (t.time-cur)*pps;
-    const lh = t.type==='hold' ? (t.duration||0.5)*pps : Math.max(150*dpr, pps*0.30);
+    const lh = t.type==='hold' ? (t.duration||0.5)*pps : Math.max(150*dpr, pps*0.42);
     const yT = yH-lh;
     if(yH < -160*dpr || yT > h+80*dpr) continue;
     const hx0=g.center(t.lane,yH)-g.half(yH)+gap, hx1=g.center(t.lane,yH)+g.half(yH)-gap;
@@ -633,7 +638,9 @@ function draw(now=0){
     if(p.t>=p.life){ particles.splice(i,1); continue; }
     ctx.globalAlpha = 1-p.t/p.life; ctx.fillStyle=p.col;
     const ps=(p.s||2.2)*dpr;
-    ctx.fillRect(p.x*dpr, p.y*dpr, ps, ps); ctx.globalAlpha=1;
+    // Particle positions are already in canvas pixels (stageGeom uses the
+    // backing canvas dimensions), so do not scale them a second time on HiDPI.
+    ctx.fillRect(p.x, p.y, ps, ps); ctx.globalAlpha=1;
   }
   for(let i=feedbacks.length-1;i>=0;i--){
     const f=feedbacks[i]; f.t+=dt; f.y-=46*dt;
@@ -641,8 +648,8 @@ function draw(now=0){
     ctx.globalAlpha = 1-f.t/f.life;
     ctx.font = `800 ${15*dpr}px Sora, Inter, sans-serif`; ctx.textAlign='center';
     ctx.lineWidth=4*dpr; ctx.strokeStyle='rgba(0,0,0,.65)';
-    ctx.strokeText(f.text, f.x*dpr, f.y*dpr);
-    ctx.fillStyle=f.col; ctx.fillText(f.text, f.x*dpr, f.y*dpr);
+    ctx.strokeText(f.text, f.x, f.y);
+    ctx.fillStyle=f.col; ctx.fillText(f.text, f.x, f.y);
     ctx.globalAlpha=1;
   }
   // impact rings blooming across the struck key
@@ -651,7 +658,7 @@ function draw(now=0){
     if(r.t>=r.life){ ripples.splice(i,1); continue; }
     const k = r.t/r.life;
     ctx.globalAlpha = (1-k)*0.7; ctx.strokeStyle=r.col; ctx.lineWidth=2*dpr;
-    ctx.beginPath(); ctx.ellipse(r.x*dpr, r.y, (10+k*46)*dpr, (4+k*13)*dpr, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(r.x, r.y, (10+k*46)*dpr, (4+k*13)*dpr, 0, 0, Math.PI*2); ctx.stroke();
     ctx.globalAlpha=1;
   }
 }
