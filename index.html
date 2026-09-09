@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Nocturne — Piano Tiles</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Sora:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>try{var __t=localStorage.getItem('nocturne-theme');if(__t)document.documentElement.dataset.theme=__t;}catch(e){}</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 3D INTRO -->
+<div id="intro">
+  <canvas id="piano3d"></canvas>
+  <div class="intro-veil"></div>
+  <div class="intro-copy">
+    <p class="intro-kicker">A piano tiles study</p>
+    <h1 class="intro-title">Nocturne</h1>
+    <p class="intro-sub">Four lanes. Any song. Your music becomes the score —<br>analysed on-device, note by note.</p>
+    <button id="enterBtn" class="enter-btn"><span>Take your seat</span><span class="enter-arrow">→</span></button>
+    <p class="intro-meta" id="introMeta">preparing the room…</p>
+  </div>
+  <div class="intro-foot"><span>D F J K · arrows · tap on touch</span><span>headphones recommended</span></div>
+</div>
+
+<!-- APP -->
+<header class="masthead">
+  <div class="wordmark"><span class="wm-note">♩</span><span class="wm-name">Nocturne</span><span class="wm-tag">PIANO TILES</span></div>
+  <div class="mast-song" id="mastSong">Twinkle Little Star — 100 BPM</div>
+  <div class="mast-actions">
+    <button id="btnUpload" class="btn-upload">⇪ Upload Music</button>
+    <button id="btnHow" class="icon-btn" title="How to play">?</button>
+    <button id="btnTheme" class="icon-btn" title="Toggle theme">☾</button>
+    <button id="btnShare" class="icon-btn" title="Share score">⤴</button>
+  </div>
+</header>
+
+<main class="shell">
+  <!-- Stage first in DOM so mobile leads with the game -->
+  <section class="board-col">
+    <div class="hud">
+      <div class="hud-cell"><span class="hud-lbl">Score</span><b id="hudScore">0</b></div>
+      <div class="hud-cell center"><span class="hud-lbl">Combo</span><b id="hudCombo">0</b><span id="hudGrade"></span></div>
+      <div class="hud-cell right"><span class="hud-lbl">Accuracy</span><b id="hudAcc">100%</b></div>
+    </div>
+    <div class="trackline"><div id="progBar"></div></div>
+    <div class="trackmeta"><span id="progText">0 / 40 seconds</span><span id="detectLabel"></span></div>
+
+    <div class="game-outer">
+      <div class="game-frame" id="gameFrame">
+        <canvas id="gameCanvas"></canvas>
+        <div class="hp-strip"><div id="hpFill"></div></div>
+        <div class="overlay" id="overlay">
+          <div class="overlay-card">
+            <p class="ov-kicker" id="overlayKicker">Ready</p>
+            <h2 id="overlayTitle">Twinkle Little Star</h2>
+            <p id="overlayDesc">Press play, or add your own song.</p>
+            <button class="play-btn" id="overlayPlay">Play</button>
+            <p class="ov-hint">D&nbsp;F&nbsp;J&nbsp;K · tap the keys</p>
+          </div>
+        </div>
+        <div class="countdown" id="countdown"></div>
+      </div>
+    </div>
+
+    <div class="board-toolbar">
+      <div class="seg" id="modeSeg">
+        <button class="seg-btn active" data-mode="classic">Classic</button>
+        <button class="seg-btn" data-mode="arcade">Arcade</button>
+        <button class="seg-btn" data-mode="zen">Zen</button>
+      </div>
+      <div class="board-btns">
+        <button id="btnRestart" class="mini-btn">Restart</button>
+        <button id="btnPause" class="mini-btn" style="display:none">Pause</button>
+        <button id="btnPlay" class="mini-btn accent">Play</button>
+      </div>
+    </div>
+    <p class="board-foot">TAP THE TILES OR USE D F J K</p>
+  </section>
+
+  <!-- Songs -->
+  <aside class="col col-songs" id="songsPanel">
+    <p class="panel-label">♪ Songs</p>
+    <div class="song-list" id="songList"></div>
+    <p class="side-note" id="customBadge" style="display:none"></p>
+  </aside>
+
+  <!-- Studio -->
+  <aside class="col col-studio" id="studioPanel">
+    <section class="panel">
+      <p class="panel-label">♪ Your music</p>
+      <label class="drop" id="dropzone">
+        <input type="file" id="fileInput" accept="audio/*" hidden>
+        <span class="drop-icon">⇪</span>
+        <span class="drop-title">Upload a song to create tiles</span>
+        <span class="drop-sub">MP3 · WAV · OGG · FLAC</span>
+        <span class="drop-file" id="fileName">No file yet</span>
+      </label>
+      <button class="upload-btn" id="btnUpload2">Upload Music</button>
+      <div class="urlrow">
+        <input type="text" id="urlInput" placeholder="…or paste a direct mp3 URL">
+        <button class="mini-btn" id="btnLoadUrl">Load</button>
+      </div>
+      <div class="analyze" id="analyzeRow" style="display:none">
+        <div class="analyze-bar"><div id="analyzeBar"></div></div>
+        <span id="analyzeText">Analysing…</span>
+      </div>
+      <audio id="audioEl" crossorigin="anonymous" preload="metadata"></audio>
+    </section>
+
+    <section class="panel">
+      <p class="panel-label">⚙ Game Settings</p>
+      <p class="setup-cap">Difficulty</p>
+      <div class="seg wrap" id="diffSeg">
+        <button class="seg-btn" data-diff="easy">Easy</button>
+        <button class="seg-btn active" data-diff="normal">Normal</button>
+        <button class="seg-btn" data-diff="hard">Hard</button>
+        <button class="seg-btn" data-diff="insane">Insane</button>
+      </div>
+      <select id="difficulty" style="display:none">
+        <option value="easy">Easy</option>
+        <option value="normal" selected>Normal</option>
+        <option value="hard">Hard</option>
+        <option value="insane">Insane</option>
+      </select>
+      <label class="slider-row"><span>Speed <b id="speedVal">1.0×</b></span><input type="range" id="speedSlider" min="0.7" max="1.8" step="0.05" value="1.0"></label>
+      <label class="slider-row"><span>Tile Size <b id="widthVal">560px</b></span><input type="range" id="widthSlider" min="380" max="680" step="10" value="560"></label>
+      <label class="switch-row"><span>♪ Piano sounds</span><input type="checkbox" id="autoPlayDemo" checked><i></i></label>
+      <label class="switch-row"><span>Key hints (D F J K)</span><input type="checkbox" id="keyHints" checked><i></i></label>
+      <label class="switch-row"><span>Hold notes</span><input type="checkbox" id="holdNotes" checked><i></i></label>
+      <label class="slider-row"><span>Audio offset <b id="offsetVal">+0ms</b></span><input type="range" id="offsetSlider" min="-150" max="150" step="5" value="0"></label>
+      <details class="debug">
+        <summary>Analysis</summary>
+        <canvas id="debugCanvas" height="110"></canvas>
+        <p class="debug-stats" id="debugStats">No analysis yet.</p>
+        <div class="mini-stats">
+          <div><span>Best</span><b id="statBest">0</b></div>
+          <div><span>Perfect</span><b id="statPerfect">0</b></div>
+          <div><span>Great</span><b id="statGreat">0</b></div>
+          <div><span>Good</span><b id="statGood">0</b></div>
+          <div><span>Miss</span><b id="statMiss">0</b></div>
+        </div>
+      </details>
+    </section>
+  </aside>
+</main>
+
+<div class="drawer-btns">
+  <button id="btnSongs" class="drawer-btn">♪ Songs</button>
+  <button id="btnStudio" class="drawer-btn">⚙ Studio</button>
+</div>
+
+<dialog id="howDialog">
+  <h3>How to play</h3>
+  <ol>
+    <li>Pick a song — or upload your own.</li>
+    <li>Press <b>Play</b>. Tiles fall down four lanes.</li>
+    <li>Strike each tile as it lands on its piano key — <b>D F J K</b>, arrow keys, or tap the keys.</li>
+    <li>Hold the long tiles until their tail passes.</li>
+  </ol>
+  <button class="play-btn" onclick="this.closest('dialog').close()">Begin</button>
+</dialog>
+
+<dialog id="resultDialog">
+  <p class="ov-kicker" id="resultKicker">Finished</p>
+  <h2 id="resultTitle">Nice run</h2>
+  <p class="res-sub" id="resultSub"></p>
+  <div class="res-grid">
+    <div><span>Score</span><b id="resScore">0</b></div>
+    <div><span>Combo</span><b id="resCombo">0</b></div>
+    <div><span>Accuracy</span><b id="resAcc">0%</b></div>
+    <div><span>Rank</span><b id="resRank">C</b></div>
+  </div>
+  <div class="res-actions">
+    <button class="play-btn" id="btnRetry">Play again</button>
+    <button class="mini-btn" onclick="this.closest('dialog').close()">Close</button>
+  </div>
+</dialog>
+
+<script src="audio-analysis.js"></script>
+<script src="intro.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
