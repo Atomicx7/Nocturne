@@ -103,6 +103,7 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;opacity:.5;
 .panel-label{margin:2px 0 8px;font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:600}
 .panel{background:var(--card);border:1px solid var(--line-soft);border-radius:12px;padding:14px}
 .panel-fold{display:none}
+.panel-close{display:none}
 @media(min-width:1181px){
   .panel-fold{display:grid;place-items:center;position:absolute;top:0;width:28px;height:38px;z-index:3;border:1px solid var(--line);background:var(--paper-2);color:var(--champ);font:600 24px Inter;cursor:pointer}
   .panel-fold-left{right:0;border-radius:0 10px 10px 0}
@@ -223,9 +224,13 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;opacity:.5;
   .board-foot{display:none}
   .drawer-btns{display:flex;gap:8px;position:fixed;top:8px;left:8px;right:8px;z-index:50;justify-content:space-between;pointer-events:none}
   .drawer-btn{appearance:none;border:1px solid var(--gold);background:rgba(10,10,11,.94);color:var(--champ);border-radius:999px;padding:9px 16px;font:600 12px Inter;cursor:pointer;pointer-events:auto}
+  .drawer-theme{width:38px;padding:0;font-size:16px}
   .col{display:none}
-  .col.open{display:flex;position:fixed;z-index:40;inset:58px 10px 10px;background:var(--paper-2);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 24px 70px rgba(0,0,0,.6);overflow:auto}
-  .col.open::before{content:'×';position:absolute;right:12px;top:8px;color:var(--champ);font-size:26px;line-height:1}
+  .col.open{display:flex;position:fixed;z-index:40;inset:58px 10px 10px;background:var(--paper-2);border:1px solid var(--line);border-radius:16px;padding:22px 14px 14px;box-shadow:0 24px 70px rgba(0,0,0,.6);overflow:auto}
+  .panel-close{display:grid;place-items:center;position:absolute;right:10px;top:8px;width:32px;height:32px;border:0;border-radius:50%;background:rgba(255,255,255,.07);color:var(--champ);font:400 25px/1 Inter;cursor:pointer;z-index:2}
+  .col.open .panel-label{font-size:11px;margin-bottom:12px}
+  .col.open .song{padding:11px 10px}.col.open .song-meta b{font-size:14px}.col.open .song-meta span{font-size:11px}
+  .col.open .switch-row{font-size:14px;margin:14px 0}.col.open .seg-btn{padding:9px 14px;font-size:13px}
   .col.open .panel{background:transparent;border:0;padding:0}
   .col.open .panel-fold{display:none}
   .mast-song{display:none}

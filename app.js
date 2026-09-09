@@ -62,7 +62,7 @@ const PRESETS = [
 ];
 
 let currentPreset = PRESETS[0];
-let currentMode = 'classic';
+let currentMode = 'arcade';
 let customAudioBuffer = null;
 let customObjectUrl = null;
 let customName = null;
@@ -533,7 +533,7 @@ function draw(now=0){
   // pressed-lane wash + miss flash
   for(let i=0;i<4;i++){
     if(keyActive[i]){ ctx.fillStyle='rgba(216,180,106,.10)'; laneQuad(g,i,0,g.keyTop); ctx.fill(); }
-    if(laneFlash[i]>0){ ctx.fillStyle=`rgba(255,80,95,${0.20*laneFlash[i]})`; laneQuad(g,i,0,g.keyTop); ctx.fill(); }
+    if(laneFlash[i]>0){ ctx.fillStyle=`rgba(255,80,95,${0.07*laneFlash[i]})`; laneQuad(g,i,0,g.keyTop); ctx.fill(); }
   }
   // soft diagonal light beams
   ctx.fillStyle='rgba(240,217,168,.035)';
@@ -594,7 +594,10 @@ function draw(now=0){
   for(const t of activeTiles){
     if((t.hit && t.type==='tap') || t.missed) continue;
     const yH = g.keyTop - (t.time-cur)*pps;
-    const lh = t.type==='hold' ? (t.duration||0.5)*pps : Math.max(150*dpr, pps*0.42);
+    // Scale tap length with lane width so it keeps a natural proportion
+    // throughout the 3D runway instead of appearing to shrink near the keys.
+    const tapLength = Math.max(150*dpr, pps*0.42) * g.spread(yH);
+    const lh = t.type==='hold' ? (t.duration||0.5)*pps : tapLength;
     const yT = yH-lh;
     if(yH < -160*dpr || yT > h+80*dpr) continue;
     const hx0=g.center(t.lane,yH)-g.half(yH)+gap, hx1=g.center(t.lane,yH)+g.half(yH)-gap;
@@ -870,13 +873,19 @@ offsetSlider.addEventListener('input', ()=>{
 });
 offsetSlider.addEventListener('change', ()=>{ if(customAudioBuffer) buildTilesForCurrent(); });
 const btnTheme = $('#btnTheme');
-function paintThemeBtn(){ if(btnTheme) btnTheme.textContent = isDark() ? '☾' : '☀'; }
+function paintThemeBtn(){
+  const icon = isDark() ? '☾' : '☀';
+  if(btnTheme) btnTheme.textContent = icon;
+  if(btnMobileTheme) btnMobileTheme.textContent = icon;
+}
 if(btnTheme) btnTheme.onclick = ()=>{
   const next = isDark() ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
   try{ localStorage.setItem('nocturne-theme', next); }catch(e){}
   paintThemeBtn(); draw(0); drawDebugView();
 };
+const btnMobileTheme = $('#btnMobileTheme');
+if(btnMobileTheme) btnMobileTheme.onclick = ()=>{ if(btnTheme) btnTheme.click(); };
 paintThemeBtn();
 // header + panel upload shortcuts open the file picker
 const openPicker = ()=>{ try{ fileInput.click(); }catch(e){} };
@@ -894,6 +903,8 @@ $('#btnFoldStudio').onclick = ()=>{
   studioPanel.classList.toggle('folded');
   $('#btnFoldStudio').textContent = studioPanel.classList.contains('folded') ? '‹' : '›';
 };
+$('#btnCloseSongs').onclick = ()=>songsPanel.classList.remove('open');
+$('#btnCloseStudio').onclick = ()=>studioPanel.classList.remove('open');
 if($('#btnSongs')) $('#btnSongs').onclick = ()=>{
   songsPanel.classList.toggle('open'); studioPanel.classList.remove('open');
 };

@@ -52,8 +52,8 @@
 
     <div class="board-toolbar board-toolbar-top">
       <div class="seg" id="modeSeg">
-        <button class="seg-btn active" data-mode="classic">Classic</button>
-        <button class="seg-btn" data-mode="arcade">Arcade</button>
+        <button class="seg-btn" data-mode="classic">Classic</button>
+        <button class="seg-btn active" data-mode="arcade">Arcade</button>
         <button class="seg-btn" data-mode="zen">Zen</button>
       </div>
       <div class="board-btns">
@@ -86,6 +86,7 @@
   <!-- Songs -->
   <aside class="col col-songs" id="songsPanel">
     <button class="panel-fold panel-fold-left" id="btnFoldSongs" aria-label="Collapse songs">‹</button>
+    <button class="panel-close" id="btnCloseSongs" aria-label="Close songs">×</button>
     <p class="panel-label">♪ Songs</p>
     <div class="song-list" id="songList"></div>
     <p class="side-note" id="customBadge" style="display:none"></p>
@@ -94,6 +95,7 @@
   <!-- Studio -->
   <aside class="col col-studio" id="studioPanel">
     <button class="panel-fold panel-fold-right" id="btnFoldStudio" aria-label="Collapse settings">›</button>
+    <button class="panel-close" id="btnCloseStudio" aria-label="Close settings">×</button>
     <section class="panel">
       <p class="panel-label">♪ Your music</p>
       <label class="drop" id="dropzone">
@@ -129,7 +131,7 @@
         <option value="hard">Hard</option>
       </select>
       <p class="level-note" id="levelNote">Normal · original tempo</p>
-      <label class="switch-row"><span>♪ Piano sounds</span><input type="checkbox" id="autoPlayDemo" checked><i></i></label>
+      <label class="switch-row"><span>♪ Piano sounds</span><input type="checkbox" id="autoPlayDemo"><i></i></label>
       <label class="switch-row"><span>Key hints (D F J K)</span><input type="checkbox" id="keyHints" checked><i></i></label>
       <label class="switch-row"><span>Hold notes</span><input type="checkbox" id="holdNotes" checked><i></i></label>
       <label class="slider-row"><span>Audio offset <b id="offsetVal">+0ms</b></span><input type="range" id="offsetSlider" min="-150" max="150" step="5" value="0"></label>
@@ -151,6 +153,7 @@
 
 <div class="drawer-btns">
   <button id="btnSongs" class="drawer-btn">♪ Songs</button>
+  <button id="btnMobileTheme" class="drawer-btn drawer-theme" title="Toggle theme">☾</button>
   <button id="btnStudio" class="drawer-btn">⚙ Studio</button>
 </div>
 

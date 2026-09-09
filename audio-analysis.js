@@ -465,6 +465,24 @@
     var rng = mulberry32(seed);
     // chronological spacing pass: conflicting close events keep the stronger
     var clusters = clusterEvents(analysis.candidates, diffKey);
+    // Spectral flux favors claps and drums. Add a quiet beat-grid fallback
+    // whenever a melodic/piano passage has no nearby transient, so the chart
+    // continues to follow the music instead of leaving empty stretches.
+    var beats = analysis.beats || [];
+    for (var bi = 0; bi < beats.length; bi++) {
+      var bt = beats[bi];
+      if (bt < 0.3 || bt > duration - 0.2) continue;
+      var nearby = false;
+      for (var ci = 0; ci < clusters.length; ci++) {
+        if (Math.abs(clusters[ci].time - bt) <= 0.11) { nearby = true; break; }
+      }
+      if (!nearby) clusters.push({
+        time: bt, spanEnd: bt, str: 0.00001, sum: 0.00001, count: 1,
+        members: [], subdivision: '1', downbeat: bi % 4 === 0,
+        confidence: 0.35, frame: Math.round(bt * analysis.fps), fallback: true
+      });
+    }
+    clusters.sort(function (a, b) { return a.time - b.time; });
     var kept = [];
     for (var i = 0; i < clusters.length; i++) {
       var cl = clusters[i];
@@ -592,6 +610,15 @@
       }
       return true;
     });
+    // A rapid repeat on the same lane reads as overlapping "FF" tiles and is
+    // not playable at this game's visual tile length. Keep the stronger one.
+    for (var sg = fixed.length - 1; sg > 0; sg--) {
+      if (fixed[sg].lane === fixed[sg - 1].lane && fixed[sg].time - fixed[sg - 1].time < 0.18) {
+        var dropSame = (fixed[sg].str || 0) > (fixed[sg - 1].str || 0) ? sg - 1 : sg;
+        errors.push('repair close same-lane repeat @' + fixed[dropSame].time.toFixed(3));
+        fixed.splice(dropSame, 1);
+      }
+    }
     // repair: same timestamp in the SAME lane is a duplicate (drop weaker).
     // Same timestamp in DIFFERENT lanes is a chord — always legal.
     // More than two simultaneous lanes is never allowed — drop the weakest.
