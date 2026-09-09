@@ -1,17 +1,31 @@
-/* Nocturne rhythm analysis v2 — UMD (browser + node).
+/* Nocturne rhythm analysis v3 — UMD (browser + node).
  *
  * Pipeline:
  *   PCM mono -> DC removal / light normalization / pre-emphasis
  *   -> Hann-windowed STFT (FRAME 2048, HOP 512) -> RMS + silence gate
  *   -> per-band log spectral flux (LOW 20-200 / MID 200-2000 / HIGH 2000-10000 Hz)
+ *      + chroma-change flux (harmonic/melodic attacks: piano, vocals)
  *   -> combined onset envelope -> adaptive threshold (local mean + k*std)
  *   -> peak picking (parabolic interpolation, min 80ms separation)
- *   -> tempo via envelope autocorrelation (60-200 BPM, octave-normalized)
- *   -> beat phase search -> beat grid + downbeat detection
- *   -> quantization to 1/4-beat grid (max ~100ms snap)
+ *   -> global tempo via envelope autocorrelation (60-200 BPM, octave-normalized)
+ *   -> DYNAMIC beat tracking: anchor phase + walked grid with local
+ *      interval re-fits (continuity-clamped), so the grid bends with drift
+ *   -> quantization to the LOCAL 1/4-beat grid (max ~100ms snap)
  *   -> strength scoring -> difficulty selection (same analysis)
  *   -> constrained lane assignment (seeded, deterministic)
  *   -> chart validation + repair
+ *
+ * v3 changes (why):
+ *   1. Removed the beat-grid fallback that invented near-zero-strength tiles
+ *      at beats with no onset evidence. Sparse music now yields sparse
+ *      charts; tiles only ever trace to real detected onsets.
+ *   2. Replaced the rigid global grid with a walking beat tracker: tempo and
+ *      phase are re-fit in rolling windows with continuity clamps, so rubato
+ *      and mid-song tempo changes stay tracked instead of drifting off.
+ *   3. Added a chroma-change (harmonic) onset detector voiced alongside the
+ *      percussive flux, and parametrized the band weights (W_LOW/W_MID/
+ *      W_HIGH/W_HARM), so soft piano attacks and vocal phrasing are detected
+ *      instead of only drums and cymbals.
  *
  * Tile TIMING always derives from the audio. Seeded PRNG is used only for
  * lane presentation (and never for timing).
@@ -22,7 +36,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var ANALYSIS_VERSION = 2;
+  var ANALYSIS_VERSION = 3;
   var FRAME = 2048;
   var HOP = 512;
   var MIN_ONSET_GAP = 0.08;      // 80ms minimum onset separation
@@ -33,7 +47,7 @@
   // The game intentionally caps simultaneous notes at two.
   var DIFF = {
     easy:   { maxRate: 1.35, minGap: 0.42, subs: { '1': 1 },                    dbl: 0.06, dblDense: 0.05, pThr: 0.66 },
-    normal: { maxRate: 1.90, minGap: 0.30, subs: { '1': 1, '1/2': 1 },           dbl: 0.13, dblDense: 0.18, pThr: 0.57 },
+    normal: { maxRate: 1.90, minGap: 0.24, subs: { '1': 1, '1/2': 1 },           dbl: 0.13, dblDense: 0.18, pThr: 0.57 },
     hard:   { maxRate: 2.55, minGap: 0.22, subs: { '1': 1, '1/2': 1, '1/4': 1 }, dbl: 0.16, dblDense: 0.22, pThr: 0.48 },
     insane: { maxRate: 3.0,  minGap: 0.18, subs: { '1': 1, '1/2': 1, '1/4': 1 }, dbl: 0.18, dblDense: 0.24, pThr: 0.45 }
   };
@@ -146,6 +160,13 @@
     return { low: range(20, 200), mid: range(200, 2000), high: range(2000, 10000) };
   }
 
+  // Onset weights. The percussive bands catch drums/transients; HARM catches
+  // harmonic change (piano attacks, vocal phrasing) that high-band flux
+  // misses. v2 tilted permanently toward percussion (high-band dominant and
+  // nothing harmonic); v3 voices both detectors and lets the p95
+  // normalization below settle their relative scale per song.
+  var W_LOW = 0.40, W_MID = 0.30, W_HIGH = 0.60, W_HARM = 0.90;
+
   function frameAnalysis(data, sr, onProgress) {
     var edges = bandEdges(sr);
     var hann = new Float32Array(FRAME);
@@ -154,10 +175,23 @@
     var fps = sr / HOP;
     var re = new Float64Array(FRAME), im = new Float64Array(FRAME), mag = new Float64Array(FRAME / 2 + 1);
     var prev = new Float64Array(FRAME / 2 + 1);
+    // chroma classes for the melodic band (200-5000 Hz): bin -> pitch class
+    // 0..11, or -1 outside the band. Precomputed once per analysis.
+    var binHz = sr / FRAME;
+    var chromaCls = new Int8Array(FRAME / 2 + 1);
+    for (var cb = 0; cb <= FRAME / 2; cb++) {
+      var cf = cb * binHz;
+      if (cf < 200 || cf > 5000) { chromaCls[cb] = -1; continue; }
+      var pc = Math.round(12 * Math.log(cf / 440) / Math.LN2) % 12;
+      chromaCls[cb] = (pc + 12) % 12;
+    }
+    var chA = new Float64Array(12), chB = new Float64Array(12);
+    var chPrev = chA, chNow = chB;
     var C = 60; // log compression
     var nov = new Float32Array(nFrames);
     var rms = new Float32Array(nFrames);
     var lowShare = new Float32Array(nFrames);
+    var lowFlux = new Float32Array(nFrames); // raw low-band flux, for beat-phase voting
     var peakRms = 0;
 
     // first pass RMS peak (for silence gate) — cheap loop
@@ -188,8 +222,43 @@
         var dH = Math.log1p(C * mag[b]) - Math.log1p(C * prev[b]);
         if (dH > 0) fH += dH;
       }
+      // harmonic-change flux: normalized positive chroma difference.
+      // Piano/vocal note changes redistribute harmonic energy across pitch
+      // classes even when broadband flux barely moves, so this fires on soft
+      // attacks; normalization keeps quiet passages comparable to loud ones.
+      // (A longer-baseline variant was tried: comparing against sound from
+      // ~500ms ago leaves a 500ms "halo" of elevated novelty after every
+      // attack in sparse material, which inflates any local threshold and
+      // buries the following legato attacks. Adjacent-frame it is; vibrato
+      // trains are handled downstream by the rise gate + chain suppression.)
+      var hf = 0, chTot = 0, cc;
+      for (cc = 0; cc < 12; cc++) chNow[cc] = 0;
+      for (b = edges.low[1]; b <= FRAME / 2 && b * binHz <= 5000; b++) {
+        var cls = chromaCls[b];
+        if (cls >= 0) chNow[cls] += Math.log1p(C * mag[b]);
+      }
+      for (cc = 0; cc < 12; cc++) {
+        var dc = chNow[cc] - chPrev[cc];
+        if (dc > 0) hf += dc;
+        chTot += chNow[cc];
+        chPrev[cc] = chNow[cc];
+      }
+      var harm = hf / Math.max(1e-9, chTot);
       for (b = 0; b <= FRAME / 2; b++) prev[b] = mag[b];
-      nov[fr] = 0.40 * fL + 0.30 * fM + 0.60 * fH;
+      // Soft-AND with level-rise evidence: a spectral change only counts as
+      // an onset if the level is also rising out of a recent dip. Attacks
+      // (even soft legato ones) rise sharply from their dip and score up to
+      // 1.5x; vibrato wobble and decay texture sit near 0.5x. This separates
+      // soft attacks from sustain wobble that no pure-flux amplitude
+      // threshold can split (measured: both peak ~0.55 on ballads).
+      var dipM = rms[fr];
+      for (var db = Math.max(0, fr - 8); db < fr; db++) {
+        if (rms[db] < dipM) dipM = rms[db];
+      }
+      var riseG = (rms[Math.min(nFrames - 1, fr + 2)] - dipM) / Math.max(1e-4, peakRms * 0.1);
+      if (riseG < 0) riseG = 0; else if (riseG > 1) riseG = 1;
+      nov[fr] = (W_LOW * fL + W_MID * fM + W_HIGH * fH + W_HARM * harm) * (0.5 + riseG);
+      lowFlux[fr] = fL; // unnormalized low-band flux, for beat-phase voting
       var tot = 0;
       for (b = 1; b <= FRAME / 2; b++) tot += mag[b] * mag[b];
       lowShare[fr] = eL / Math.max(1e-12, tot);
@@ -199,7 +268,7 @@
     var cp = Array.prototype.slice.call(nov).sort(function (a, b) { return a - b; });
     var p95 = cp[Math.floor(cp.length * 0.95)] || 1;
     for (var q = 0; q < nFrames; q++) nov[q] /= Math.max(1e-9, p95);
-    return { novelty: nov, rms: rms, peakRms: peakRms, lowShare: lowShare, nFrames: nFrames, fps: fps };
+    return { novelty: nov, rms: rms, peakRms: peakRms, lowShare: lowShare, lowFlux: lowFlux, nFrames: nFrames, fps: fps };
   }
 
   function isSilent(rms, peakRms) {
@@ -207,10 +276,24 @@
     return rms < floor;
   }
 
-  /* ---------- step 3: adaptive peaks ---------- */
+  /* ---------- step 3: adaptive peaks ----------
+     v3 addition — energy-rise gate: vibrato/tremolo on a sustained note
+     produces strong spectral flux (energy sloshing between bins) with
+     almost no level change, and those wobble peaks can outscore the soft
+     attack that started the note. A genuine onset coincides with an RMS
+     rise measured from the recent local MINIMUM (dip-then-rise): legato
+     notes that start on an already-loud pedestal still show a dip recovery,
+     while pure wobble crests barely rise above their trough. */
   function detectOnsets(nov, rms, peakRms, fps, thresholdFactor) {
     var n = nov.length;
-    var win = Math.max(8, Math.round(fps * 0.5)); // ±0.5s local window
+    // ±1.0s local window (was ±0.5s): on sparse material the wider window
+    // dilutes sustain wobble with surrounding gap silence, dropping the
+    // threshold onto soft attacks; on dense drums the statistics barely
+    // change, so percussive detection is unaffected.
+    var win = Math.max(8, Math.round(fps * 1.0));
+    var back = Math.max(1, Math.round(0.09 * fps));
+    var fwd = Math.max(1, Math.round(0.02 * fps));
+    var riseTol = 0.02 * Math.max(1e-4, peakRms);
     var raw = [];
     var minGapF = Math.max(2, Math.round(MIN_ONSET_GAP * fps));
     for (var i = 2; i < n - 2; i++) {
@@ -223,6 +306,10 @@
       var x = nov[i];
       if (x < thr) continue;
       if (!(x >= nov[i - 1] && x >= nov[i + 1] && x > nov[i - 2] && x >= nov[i + 2])) continue;
+      var w0 = Math.max(0, i - back), wEnd = Math.min(n - 1, i + fwd);
+      var dip = rms[w0];
+      for (var wm = w0 + 1; wm <= i; wm++) if (rms[wm] < dip) dip = rms[wm];
+      if (rms[wEnd] - dip < riseTol) continue;
       var pa = nov[i - 1], pb = x, pc = nov[i + 1];
       var den = pa - 2 * pb + pc;
       var off = den !== 0 ? 0.5 * (pa - pc) / den : 0;
@@ -239,10 +326,38 @@
       } else peaks.push(p);
     }
     // drop onsets inside silence
-    return peaks.filter(function (p) {
+    var voiced = peaks.filter(function (p) {
       var fr = Math.max(0, Math.min(n - 1, Math.round(p.time * fps)));
       return !isSilent(rms[fr], peakRms);
     });
+    // sustain-wobble chain suppression: vibrato/tremolo fires quasi-periodic
+    // peaks on HIGH sustained energy with no fresh attack behind them, while
+    // genuine rapid notes (drums, trills, repeated piano) either decay
+    // between hits (RMS dips) or arrive with a real level rise. Drop a peak
+    // when it closely follows another peak AND the ±0.3s context never drops
+    // to 30% of peak RMS (true sustain) AND its own ~110ms rise is under 5%
+    // of peak RMS (no fresh attack). lastPt advances even for dropped peaks
+    // so a wobble train cannot re-anchor itself.
+    var kept2 = [];
+    var lastPt = -1e9;
+    for (var si = 0; si < voiced.length; si++) {
+      var sp = voiced[si];
+      var dropWobble = false;
+      if (sp.time - lastPt < 0.9) {
+        var wa = Math.max(0, Math.round((sp.time - 0.3) * fps));
+        var wb = Math.min(n - 1, Math.round((sp.time + 0.3) * fps));
+        var wsum = 0, wcnt = 0;
+        for (var wi = wa; wi <= wb; wi++) { wsum += rms[wi]; wcnt++; }
+        if (wsum / Math.max(1, wcnt) > 0.3 * Math.max(1e-4, peakRms)) {
+          var sfr = Math.max(0, Math.min(n - 1, sp.frame));
+          var rise = rms[Math.min(n - 1, sfr + 2)] - rms[Math.max(0, sfr - 8)];
+          if (rise < 0.05 * Math.max(1e-4, peakRms)) dropWobble = true;
+        }
+      }
+      lastPt = sp.time;
+      if (!dropWobble) kept2.push(sp);
+    }
+    return kept2;
   }
 
   /* ---------- step 4: tempo (fractional-lag autocorrelation) ---------- */
@@ -296,10 +411,39 @@
     return { bpm: Math.round(bpmF), rawBpm: bestBpm, confidence: conf };
   }
 
-  /* ---------- step 5: beat phase + grid ----------
+  // Full-envelope autocorrelation at one lag (for the subharmonic guard).
+  function envelopeCorr(nov, fps) {
+    var n = nov.length, mean = 0;
+    for (var i = 0; i < n; i++) mean += nov[i];
+    mean /= Math.max(1, n);
+    var step = Math.max(1, Math.floor(n / 800));
+    return function (lag) {
+      if (lag < 1 || lag >= n) return -1;
+      var dot = 0, n1 = 0, n2 = 0;
+      for (var j = 0; j + lag < n; j += step) {
+        var u = nov[j] - mean, v = nov[j + lag] - mean;
+        dot += u * v; n1 += u * u; n2 += v * v;
+      }
+      return dot / Math.max(1e-9, Math.sqrt(n1 * n2));
+    };
+  }
+
+  /* ---------- step 5: dynamic beat tracking ----------
+     v2 estimated one global BPM + offset (anchored to the first 40s) and
+     extrapolated it rigidly, so tempo drift, rubato, or a mid-song tempo
+     change left the back half of the chart off the music. v3 walks the beat
+     grid through the whole track instead:
+       - anchor: same strongest-onset phase search on the first 40s,
+       - walk: each next beat is predicted from the current local interval
+         then pulled to the nearest novelty peak (±6%: evidence, not teleport),
+       - re-fit: every 8 beats the local interval is re-estimated by
+         autocorrelation in a ±6s window, clamped to ±20% of the running
+         value so one noisy bar can't yank the grid (continuity constraint).
+     Result: beats[] bends with the performance; intervals[] carries the
+     local beat length per beat for quantization. Fully deterministic.
      Phase candidates are seeded from the STRONGEST onsets (kicks/downbeats),
      then refined locally. A blind full-period sweep locks onto hats. */
-  function trackBeats(nov, fps, duration, bpm, peaks) {
+  function trackBeats(nov, fps, duration, bpm, peaks, lowFlux) {
     var beat = 60 / bpm;
     var horizon = Math.min(duration, 40); // phase search on first 40s
     var n = Math.min(nov.length, Math.floor(horizon * fps));
@@ -319,24 +463,158 @@
     var cands = [0];
     var top = (peaks || []).slice().sort(function (a, b) { return b.str - a.str; }).slice(0, 12);
     for (var c = 0; c < top.length; c++) {
-      cands.push((((top[c].time % beat) + beat) % beat));
+      var ph = (((top[c].time % beat) + beat) % beat);
+      cands.push(ph);
+      // The strongest peaks may all be off-beats (bright hats outscoring a
+      // narrowband kick); the ±40ms refine below could never walk half a
+      // beat to the true downbeat. Always evaluate the opposite phase too
+      // and let the low-frequency support decide between them.
+      cands.push((ph + beat / 2) % beat);
+    }
+    // Phase pick: novelty evidence weighted by LOW-BAND FLUX at the grid
+    // points. The strongest peaks can be off-beats (bright hats outscore a
+    // narrowband kick in summed flux), and a ±40ms refine can never walk
+    // half a beat to the true downbeat — so the opposite phase is always
+    // evaluated too (see candidate seeding above). Beats are low-frequency
+    // EVENTS (kick/bass attacks): low-band flux spikes only at the hit,
+    // while low-band ENERGY persists through the decay and cannot tell
+    // phases apart. On material with no low-end contrast (piano, vocals)
+    // the weight is ~flat and novelty decides. lowFlux is normalized by its
+    // own p95 so the weight is comparable across songs.
+    var lowNorm = null;
+    if (lowFlux) {
+      var cp = Array.prototype.slice.call(lowFlux).sort(function (a, b) { return a - b; });
+      var p95 = cp[Math.floor(cp.length * 0.95)] || 1;
+      lowNorm = new Float32Array(lowFlux.length);
+      for (var li = 0; li < lowFlux.length; li++) lowNorm[li] = lowFlux[li] / Math.max(1e-9, p95);
+    }
+    function lowSupport(off) {
+      if (!lowNorm) return 1;
+      var s = 0, cnt = 0;
+      for (var t = off; t < horizon; t += beat) {
+        var fr = Math.round(t * fps);
+        var m = 0;
+        for (var d = -2; d <= 2; d++) {
+          var q = fr + d;
+          if (q >= 0 && q < lowNorm.length && lowNorm[q] > m) m = lowNorm[q];
+        }
+        s += m; cnt++;
+      }
+      return s / Math.max(1, cnt);
     }
     var bestOff = 0, bestScore = -1;
     for (var k = 0; k < cands.length; k++) {
       for (var dj = -0.04; dj <= 0.0401; dj += 0.008) {
         var off = (cands[k] + dj + beat) % beat;
-        var s = gridScore(off);
-        if (s > bestScore) { bestScore = s; bestOff = off; }
+        var fs = gridScore(off) * (0.5 + lowSupport(off));
+        if (fs > bestScore) { bestScore = fs; bestOff = off; }
       }
     }
-    // beats across full song
-    var beats = [];
-    // extend grid backwards so downbeat search is stable
-    var startIdx = Math.ceil((0.3 - bestOff) / beat);
-    for (var i = startIdx; ; i++) {
-      var bt = bestOff + i * beat;
-      if (bt > duration - 0.15) break;
-      beats.push(bt);
+    // Walk the grid forward and backward from the anchor so local tempo
+    // drift bends the grid instead of breaking it. NFR/nov/fps close over.
+    var NFR = nov.length;
+    // local interval re-fit: autocorrelate the onset envelope around time t,
+    // lag constrained near the running interval (continuity), absolute-clamped
+    // to the 60-200 BPM musical range, with parabolic refinement.
+    function localInterval(t, refBeat) {
+      var span = 6;
+      var a = Math.max(0, Math.floor((t - span) * fps));
+      var b = Math.min(NFR - 1, Math.ceil((t + span) * fps));
+      if (b - a < 8) return refBeat;
+      var lo = Math.max(Math.round(refBeat * 0.75 * fps), Math.floor(fps * 60 / BPM_MAX));
+      var hi = Math.min(Math.round(refBeat * 1.25 * fps), Math.ceil(fps * 60 / BPM_MIN));
+      if (hi <= lo) return refBeat;
+      var mean = 0, cnt = 0, ii;
+      for (ii = a; ii <= b; ii++) { mean += nov[ii]; cnt++; }
+      mean /= Math.max(1, cnt);
+      var step = Math.max(1, Math.floor((b - a) / 400));
+      function corrAt(lag) {
+        var dot = 0, n1 = 0, n2 = 0;
+        for (var j = a; j + lag <= b; j += step) {
+          var u = nov[j] - mean, v = nov[j + lag] - mean;
+          dot += u * v; n1 += u * u; n2 += v * v;
+        }
+        return dot / Math.max(1e-9, Math.sqrt(n1 * n2));
+      }
+      var bestL = Math.round(refBeat * fps), bestR = -1e9;
+      for (var lag = lo; lag <= hi; lag++) {
+        var r = corrAt(lag);
+        if (r > bestR) { bestR = r; bestL = lag; }
+      }
+      var lagF = bestL;
+      if (bestL > lo && bestL < hi) {
+        var r0 = corrAt(bestL - 1), r1 = corrAt(bestL), r2 = corrAt(bestL + 1);
+        var den = r0 - 2 * r1 + r2;
+        if (den !== 0) {
+          var dl = 0.5 * (r0 - r2) / den;
+          if (dl > -1 && dl < 1) lagF = bestL + dl;
+        }
+      }
+      var iv = lagF / fps;
+      iv = Math.max(refBeat * 0.8, Math.min(refBeat * 1.2, iv));
+      iv = Math.max(60 / BPM_MAX, Math.min(60 / BPM_MIN, iv));
+      return iv;
+    }
+    // Beat targets: detected onset peaks mapped onto frames. Snapping
+    // prefers these over raw novelty maxima so the grid locks onto real
+    // note attacks rather than decay wobble or vibrato bumps between them.
+    var peakAt = new Float32Array(NFR);
+    for (var pi = 0; pi < (peaks || []).length; pi++) {
+      var pf = peaks[pi].frame;
+      if (pf >= 0 && pf < NFR && peaks[pi].str > peakAt[pf]) peakAt[pf] = peaks[pi].str;
+    }
+    // strongest local evidence near a predicted beat time (±6% window).
+    // In dead silence there is no evidence: hold the prediction instead of
+    // jumping to noise.
+    function snapToPeak(t, interval) {
+      var w = Math.max(2 / fps, interval * 0.06);
+      var bf = Math.round(t * fps), bw = Math.max(1, Math.round(w * fps));
+      var bm = -1, bt2 = t;
+      for (var d = -bw; d <= bw; d++) {
+        var q = bf + d;
+        if (q < 0 || q >= NFR) continue;
+        var m = 0;
+        for (var e = -2; e <= 2; e++) {
+          var qq = q + e;
+          if (qq >= 0 && qq < NFR && nov[qq] > m) m = nov[qq];
+        }
+        m += 1.5 * (peakAt[q] || 0);
+        if (m > bm) { bm = m; bt2 = q / fps; }
+      }
+      if (bm <= 1e-9) return t;
+      return bt2;
+    }
+    var fwd = [bestOff], cur = beat, steps = 0;
+    while (true) {
+      if (steps > 0 && steps % 8 === 0) {
+        cur = localInterval(fwd[fwd.length - 1], cur);
+      }
+      var pred = fwd[fwd.length - 1] + cur;
+      if (pred > duration - 0.15) break;
+      if (pred < 0.3 - cur) { fwd.push(pred); steps++; continue; }
+      fwd.push(snapToPeak(pred, cur));
+      steps++;
+      if (steps > 10000) break; // pathological guard
+    }
+    var beats = fwd.slice();
+    var back = bestOff, bsteps = 0;
+    while (true) {
+      if (bsteps > 0 && bsteps % 8 === 0) {
+        cur = localInterval(back, cur);
+      }
+      var pb = back - cur;
+      if (pb < 0.3) break;
+      back = snapToPeak(pb, cur);
+      beats.unshift(back);
+      bsteps++;
+      if (bsteps > 10000) break;
+    }
+    // local interval per beat (forward differences; last repeats) so
+    // quantization below can snap to the bent grid, not the global average.
+    var intervals = [];
+    for (var bi = 0; bi < beats.length; bi++) {
+      intervals.push(bi + 1 < beats.length ? beats[bi + 1] - beats[bi]
+        : (beats.length > 1 ? beats[beats.length - 1] - beats[beats.length - 2] : beat));
     }
     // downbeat: strongest low-frequency beat of each bar of 4
     var downPhase = 0, downBest = -1;
@@ -349,29 +627,68 @@
       e /= Math.max(1, c);
       if (e > downBest) { downBest = e; downPhase = ph; }
     }
-    return { beatInterval: beat, beatOffset: bestOff, beats: beats, downPhase: downPhase };
+    // beatInterval is reported as the median LOCAL interval (the honest
+    // summary of a bending grid); beatOffset stays the initial phase anchor.
+    var medIv = beat;
+    if (intervals.length) {
+      var sIv = intervals.slice().sort(function (a, b) { return a - b; });
+      medIv = sIv[Math.floor(sIv.length / 2)];
+    }
+    return { beatInterval: medIv, beatOffset: bestOff, beats: beats, downPhase: downPhase, intervals: intervals };
   }
 
-  /* ---------- step 6: quantize + score ---------- */
+  /* ---------- step 6: quantize + score (local grid) ----------
+     v2 snapped every onset to one rigid global grid; onsets late in a
+     drifting song were rejected as noise or yanked far from what was played.
+     v3 snaps each onset to its NEAREST bent-grid beat using that beat's own
+     local interval, so quantization error stays small everywhere. */
+  function nearestBeatIdx(beats, t) {
+    var lo = 0, hi = beats.length - 1;
+    if (!beats.length) return -1;
+    if (t <= beats[0]) return 0;
+    if (t >= beats[hi]) return hi;
+    while (hi - lo > 1) {
+      var mid = (lo + hi) >> 1;
+      if (beats[mid] < t) lo = mid; else hi = mid;
+    }
+    return (t - beats[lo] <= beats[hi] - t) ? lo : hi;
+  }
   function quantizeAndScore(peaks, grid, fps, lowShare) {
-    var beat = grid.beatInterval, off = grid.beatOffset;
-    var sub = beat / 4;
+    var beats = grid.beats || [], intervals = grid.intervals || [];
+    // Sparse material (median onset gap > 0.45s: rubato ballads, slow piano)
+    // keeps its EXACT detected timing instead of snapping to a grid that may
+    // be fictional there. Snapping exists to tighten dense rhythmic playing;
+    // yanking an isolated rubato note 100ms+ to a wrong grid is worse than
+    // no snap at all. Subdivision labels are still computed for downstream
+    // scoring (mostly moot: sparse mode keeps every subdivision).
+    var sparseQ = false;
+    if (peaks.length > 4) {
+      var pg = [];
+      for (var pi = 1; pi < peaks.length; pi++) pg.push(peaks[pi].time - peaks[pi - 1].time);
+      sparseQ = medianOf(pg) > 0.45;
+    }
     var out = [];
     for (var i = 0; i < peaks.length; i++) {
       var p = peaks[i];
-      var g = Math.round((p.time - off) / sub);
-      var qt = off + g * sub;
+      var j = nearestBeatIdx(beats, p.time);
+      var sub = (j >= 0 && intervals[j]) ? intervals[j] / 4 : 0.25;
+      var ref = j >= 0 ? beats[j] : p.time;
+      var g = Math.round((p.time - ref) / sub);
+      var qt = ref + g * sub;
       var err = Math.abs(qt - p.time);
       var division = ((g % 4) + 4) % 4; // 0 beat, 2 half, else quarter
       var subdiv = division === 0 ? '1' : division === 2 ? '1/2' : '1/4';
       var quantized = err <= MAX_QUANT_ERR;
-      if (!quantized && p.str < 0.8) continue; // noise: reject
-      var time = quantized ? (qt * 0.55 + p.time * 0.45) : p.time;
+      if (!quantized && p.str < 0.8 && !sparseQ) continue; // noise: reject
+      var time = (quantized && !sparseQ) ? (qt * 0.55 + p.time * 0.45) : p.time;
       var align = division === 0 ? 0.35 : division === 2 ? 0.2 : 0.08;
       var fr = Math.max(0, Math.min(lowShare.length - 1, p.frame));
-      var lowBonus = lowShare[fr] > 0.35 ? 0.15 : 0;
-      // downbeat bonus
-      var beatIdx = Math.round((time - off) / beat);
+      // kick/bass fundamentals live almost entirely below 200 Hz; give them
+      // a full bonus so narrowband low-end onsets survive spacing contests
+      // against broadband hats (flux sums favor many bright bins).
+      var lowBonus = lowShare[fr] > 0.5 ? 0.30 : (lowShare[fr] > 0.35 ? 0.15 : 0);
+      // downbeat bonus: absolute beat index = nearest beat + subdiv offset
+      var beatIdx = (j >= 0 ? j : 0) + Math.round(g / 4);
       var isDown = ((beatIdx - grid.downPhase) % 4 + 4) % 4 === 0 && division === 0;
       var strength = p.str + align + lowBonus + (isDown ? 0.12 : 0);
       out.push({
@@ -390,7 +707,17 @@
      composer below instead of being discarded. */
   function clusterEvents(cands, diffKey) {
     var cfg = DIFF[diffKey] || DIFF.normal;
-    var pool = cands.filter(function (c) { return cfg.subs[c.subdivision]; });
+    // Sparse-mode bypass: subdivision filtering exists to thin DENSE tracks.
+    // On sparse material (median onset gap > 0.45s) there is nothing to thin,
+    // and bin labels on a weak grid are arbitrary — dropping them would
+    // delete real notes. Keep everything; density caps still apply.
+    var sparse = false;
+    if (cands.length > 4) {
+      var gaps = [];
+      for (var gi = 1; gi < cands.length; gi++) gaps.push(cands[gi].time - cands[gi - 1].time);
+      sparse = medianOf(gaps) > 0.45;
+    }
+    var pool = sparse ? cands.slice() : cands.filter(function (c) { return cfg.subs[c.subdivision]; });
     pool.sort(function (a, b) { return a.time - b.time; });
     var clusters = [];
     for (var i = 0; i < pool.length; i++) {
@@ -465,33 +792,29 @@
     var rng = mulberry32(seed);
     // chronological spacing pass: conflicting close events keep the stronger
     var clusters = clusterEvents(analysis.candidates, diffKey);
-    // Spectral flux favors claps and drums. Add a quiet beat-grid fallback
-    // whenever a melodic/piano passage has no nearby transient, so the chart
-    // continues to follow the music instead of leaving empty stretches.
-    var beats = analysis.beats || [];
-    for (var bi = 0; bi < beats.length; bi++) {
-      var bt = beats[bi];
-      if (bt < 0.3 || bt > duration - 0.2) continue;
-      var nearby = false;
-      for (var ci = 0; ci < clusters.length; ci++) {
-        if (Math.abs(clusters[ci].time - bt) <= 0.11) { nearby = true; break; }
-      }
-      if (!nearby) clusters.push({
-        time: bt, spanEnd: bt, str: 0.00001, sum: 0.00001, count: 1,
-        members: [], subdivision: '1', downbeat: bi % 4 === 0,
-        confidence: 0.35, frame: Math.round(bt * analysis.fps), fallback: true
-      });
-    }
-    clusters.sort(function (a, b) { return a.time - b.time; });
+    // NOTE (v3): a previous revision inserted a synthetic near-zero-strength
+    // tile at every beat-grid position lacking a nearby onset cluster. That
+    // made tiles appear during melodic/vocal passages with no corresponding
+    // sound — the chart followed the metronome, not the music. Removed:
+    // every cluster below now traces to a real detected onset, so sparse
+    // music correctly yields a sparse chart. Playability on quiet songs is
+    // preserved by the spacing pass (strong events are never dropped for
+    // weak ones) and by sustain-gated holds, not by invented notes.
     var kept = [];
+    // Beat-preference weights: when two events collide inside minGap, the
+    // on-beat one survives even if it is spectrally weaker (a narrowband
+    // kick routinely loses raw-strength contests to broadband hats). The
+    // pulse is the chart's skeleton; off-beat grace notes are expendable.
+    function conflictScore(cl) {
+      return cl.str + (cl.downbeat ? 0.2 : 0) +
+        (cl.subdivision === '1' ? 0.3 : (cl.subdivision === '1/2' ? 0.1 : 0));
+    }
     for (var i = 0; i < clusters.length; i++) {
       var cl = clusters[i];
       if (cl.time < 0.3 || cl.time > duration - 0.2) continue;
       var last = kept[kept.length - 1];
       if (last && cl.time - last.time < cfg.minGap - 1e-6) {
-        var sNew = cl.str + (cl.downbeat ? 0.2 : 0);
-        var sOld = last.str + (last.downbeat ? 0.2 : 0);
-        if (sNew > sOld) kept[kept.length - 1] = cl;
+        if (conflictScore(cl) > conflictScore(last)) kept[kept.length - 1] = cl;
       } else kept.push(cl);
     }
     // rank-normalized power: an event's strength relative to THIS song
@@ -697,8 +1020,21 @@
         var tempo = estimateTempo(fr.novelty, fr.fps);
         prog(0.7);
         var peaks = detectOnsets(fr.novelty, fr.rms, fr.peakRms, fr.fps, 1.1);
+        // Subharmonic guard: a fast-yet-sparse reading is usually a
+        // vibrato/tremolo rate sitting an octave above the true pulse (e.g.
+        // 166 BPM on a ballad). Fold down when the half-tempo lag correlates
+        // nearly as well. Dense fast tracks are exempt (real 150+ BPM music
+        // is never onset-sparse), so genuine uptempo is never folded.
+        if (tempo.bpm > 140 && peaks.length / Math.max(1, duration) < 4) {
+          var corr = envelopeCorr(fr.novelty, fr.fps);
+          var lFast = Math.round(fr.fps * 60 / tempo.bpm);
+          var lSlow = Math.round(fr.fps * 60 / (tempo.bpm / 2));
+          if (corr(lSlow) >= 0.8 * corr(lFast)) {
+            tempo = { bpm: Math.round(tempo.bpm / 2), rawBpm: tempo.rawBpm, confidence: tempo.confidence * 0.9 };
+          }
+        }
         prog(0.78);
-        var grid = trackBeats(fr.novelty, fr.fps, duration, tempo.bpm, peaks);
+        var grid = trackBeats(fr.novelty, fr.fps, duration, tempo.bpm, peaks, fr.lowFlux);
         prog(0.86);
         var cands = quantizeAndScore(peaks, grid, fr.fps, fr.lowShare);
         prog(0.94);
