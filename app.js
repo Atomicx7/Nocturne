@@ -50,11 +50,15 @@ function getAudioCtx(){
 }
 
 const PRESETS = [
-  {id:'twinkle', title:'Twinkle Little Star', artist:'Traditional · 100 BPM', bpm:100, duration:40},
-  {id:'canon', title:'Canon in D', artist:'Pachelbel · 84 BPM', bpm:84, duration:46},
-  {id:'moonlight', title:'Moonlight Sonata', artist:'Beethoven · 72 BPM', bpm:72, duration:48},
-  {id:'rush', title:'Rush Hour', artist:'Etude · 138 BPM', bpm:138, duration:34},
-  {id:'dream', title:'Endless Dream', artist:'Etude · 122 BPM', bpm:122, duration:38},
+  {id:'heatwaves', title:'Heat Waves', artist:'Glass Animals · slowed + reverb', file:'glass animals - heat waves ( slowed to perfection + reverb ) (320kbps).mp3', bpm:null, duration:null, _buf:null},
+  {id:'unstoppable', title:'Unstoppable', artist:'Sia', file:'Sia - Unstoppable (Official Video - Live from the Nostalgic For The Present Tour) (320 kbps).mp3', bpm:null, duration:null, _buf:null},
+  {id:'aintworried', title:"I Ain't Worried", artist:'OneRepublic', file:'OneRepublic - I Ain\u2019t Worried (From \u201cTop Gun_ Maverick\u201d) [Official Music Video] (320kbps).mp3', bpm:null, duration:null, _buf:null},
+  {id:'aroundworld', title:'Around The World', artist:'ATC · Instrumental remake', file:'ATC - Around the world (Instrumental remake).mp3', bpm:null, duration:null, _buf:null},
+  {id:'wellerman', title:'Wellerman Remix', artist:'220 Kid × Billen Ted', file:'Wellerman (Sea Shanty _ 220 KID x Billen Ted Remix) _ Official Video (320kbps).mp3', bpm:null, duration:null, _buf:null},
+  {id:'dadada', title:'Da Da Da (Jarico Remix)', artist:'VHWX Remastered', file:'[Da Da Da \u0414\u0430 \u0434\u0430 \u0434\u0430] Jarico Remix _ VHWX Remastered (320 kbps).mp3', bpm:null, duration:null, _buf:null},
+  {id:'renai', title:'Renai Circulation', artist:'Namirin cover', file:'Renai Circulation\u300c\u604b\u611b\u30b5\u30fc\u30ad\u30e5\u30ec\u30fc\u30b7\u30e7\u30f3\u300d\u6b4c\u3063\u3066\u307f\u305f\u3010\uff0a\u306a\u307f\u308a\u3093\u3011 (320 kbps).mp3', bpm:null, duration:null, _buf:null},
+  {id:'interstellar', title:'Interstellar Theme', artist:'Piano', file:'Interstellar (Main Theme Piano) (320kbps).mp3', bpm:null, duration:null, _buf:null},
+  {id:'ltheme', title:"L's Theme", artist:'Death Note BGM', file:'L Theme Ringtone \uff5c Death Note BGM Ringtone \uff5c Death Note Ringtone \uff5c Download Link ⬇️⬇️.mp3', bpm:null, duration:null, _buf:null},
 ];
 
 let currentPreset = PRESETS[0];
@@ -63,6 +67,7 @@ let customAudioBuffer = null;
 let customObjectUrl = null;
 let customName = null;
 let detectedBpm = null;
+let uploadedFile = false; // false = bundled library song, true = user upload/URL
 let tiles = [];
 let activeTiles = [];
 let particles = [];
@@ -117,94 +122,90 @@ function renderSongs(){
   list.innerHTML = '';
   PRESETS.forEach((p, i)=>{
     const div = document.createElement('div');
-    div.className = 'song' + (p.id===currentPreset.id && !customAudioBuffer ? ' active' : '');
+    div.className = 'song' + (p.id===currentPreset.id && !uploadedFile ? ' active' : '');
     div.innerHTML = `<span class="song-num">${String(i+1).padStart(2,'0')}</span>
       <div class="song-meta"><b>${p.title}</b><span>${p.artist}</span></div>
-      <span class="song-bpm">${p.bpm}</span>`;
+      <span class="song-bpm">${p.bpm ?? '···'}</span>`;
     div.onclick = ()=>{
-      customAudioBuffer = null; customName = null; detectedBpm = null;
-      if(customObjectUrl && !customObjectUrl.startsWith('http')) URL.revokeObjectURL(customObjectUrl);
+      uploadedFile = false;
+      if(customObjectUrl && !String(customObjectUrl).startsWith('http')) URL.revokeObjectURL(customObjectUrl);
       customObjectUrl = null;
       try{ audioEl.pause(); audioEl.removeAttribute('src'); audioEl.load(); }catch(e){}
       currentPreset = p;
       fileNameEl.textContent = 'No file yet';
       customBadge.style.display = 'none';
-      buildTilesForCurrent();
-      renderSongs();
+      buildTilesForCurrent().then(()=>renderSongs());
     };
     list.appendChild(div);
   });
-  const label = customAudioBuffer ? (customName + ' — custom') : (currentPreset.title + ' — ' + currentPreset.bpm + ' BPM');
+  const label = uploadedFile
+    ? (customName + ' — custom')
+    : (currentPreset.title + ' — ' + (currentPreset.bpm ?? '··· BPM'));
   mastSong.textContent = label;
 }
 
-/* ---------- preset tiles: quantized, musical ---------- */
-function generatePresetTiles(preset){
-  const diff = difficultySel.value;
-  const beat = 60/preset.bpm;
-  const div = {easy:1, normal:2, hard:2}[diff] || 2; // subdivisions per beat
-  const step = beat/div;
-  const skip = {easy:0.34, normal:0.22, hard:0.12}[diff] ?? 0.22;
-  const out = [];
-  // deterministic per preset+difficulty: same song, same chart
-  let hs = 7;
-  for (const ch of preset.id + diff) hs = (Math.imul(hs, 31) + ch.charCodeAt(0)) | 0;
-  const rng = srand(hs);
-  const seqs = {
-    twinkle:[0,0,2,2,3,3,2,1,1,0,0,1,1,0],
-    canon:[0,1,2,3,2,1,0,2,1,3,0,1],
-    moonlight:[0,2,1,3,2,0,3,1],
-    rush:[0,1,2,3,2,1,3,0],
-    dream:[0,1,2,3,3,2,1,0],
-  };
-  const seq = seqs[preset.id] || seqs.twinkle;
-  let lane = 0, idx = 0;
-  for(let t = 1.0; t < preset.duration - 0.5; t += step){
-    idx++;
-    if(rng() < skip) continue;
-    // stepwise lane motion (plays like a melody, not dice)
-    const target = seq[idx % seq.length];
-    lane = rng() < 0.72
-      ? target
-      : Math.max(0, Math.min(3, lane + (rng()<0.5?-1:1)));
-    if(out.length && out[out.length-1].lane === lane && out[out.length-1].time > t-0.14 && rng()<0.7){
-      lane = (lane + 1 + Math.floor(rng()*2)) % 4;
-    }
-    const human = (rng()-0.5)*0.012; // ±12ms humanization
-    const isHold = holdNotesChk.checked && rng() < (diff==='easy' ? 0.045 : 0.07) && (t < preset.duration-2);
-    if(isHold){
-      const d = beat*(1+Math.floor(rng()*2));
-      out.push({time:t+human, lane, type:'hold', duration:Math.min(d, 1.4), midi:LANE_MIDI[lane]});
-      // skip the covered steps
-      t += d - step;
-    } else {
-      out.push({time:t+human, lane, type:'tap', midi:LANE_MIDI[lane]});
-      // downbeat-driven chords (deterministic, pattern-based — never spam):
-      // Downbeats bloom into paired notes; Hard adds a few off-beat pairs.
-      // Cross-hand only: D,F = left hand · J,K = right hand, never D+F / J+K.
-      const beatIdx = Math.round((t-1.0)/beat);
-      const extra = [];
-      const oppHand = lane<2 ? [2,3] : [0,1];
-      if(beatIdx%4===0){
-        let dl = seq[(idx+2)%seq.length];
-        if(dl===lane || !oppHand.includes(dl)) dl = oppHand[Math.floor(rng()*2)];
-        extra.push(dl);
-      } else if(diff==='hard' && beatIdx%2===1 && rng()<0.15){
-        extra.push(oppHand[Math.floor(rng()*2)]);
-      }
-      for(const l2 of extra){
-        out.push({time:t+human, lane:l2, type:'tap', midi:LANE_MIDI[l2]});
-      }
-    }
-  }
-  out.sort((a,b)=>a.time-b.time);
-  return out;
-}
+/* Library songs are real audio (songs/): fetched + decoded on first select,
+   then analysed and played through the standard pipeline below.
+   No synthesized placeholder charts. */
 
 /* Rhythm analysis lives in audio-analysis.js: Hann STFT -> multi-band log
    spectral flux -> adaptive threshold -> autocorrelation tempo -> beat phase
    search -> 1/4-beat quantization -> strength selection -> seeded lanes ->
    validation. Analysis runs once per import; difficulty only re-selects. */
+
+/* ---------- library song loading ----------
+   Two paths so the game works however it is opened:
+   1) fetch('songs/…') — fast path when served over http(s).
+   2) embedded songs/<id>-data.js via a classic <script> tag — script
+      subresources are NOT blocked on file://, so double-clicking
+      index.html works too. The base64 string is freed right after decode. */
+function loadScriptFile(src){
+  return new Promise((resolve, reject)=>{
+    const s = document.createElement('script');
+    const to = setTimeout(()=>{ s.remove(); reject(new Error('script timeout')); }, 180000);
+    s.onload = ()=>{ clearTimeout(to); s.remove(); resolve(); };
+    s.onerror = ()=>{ clearTimeout(to); s.remove(); reject(new Error('script load failed')); };
+    s.src = src;
+    document.head.appendChild(s);
+  });
+}
+function b64ToArrayBuffer(b64){
+  const bin = atob(b64);
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  const CH = 32768;
+  for(let i=0;i<len;i+=CH){
+    const n = Math.min(CH, len-i);
+    for(let j=0;j<n;j++) bytes[i+j] = bin.charCodeAt(i+j);
+  }
+  return bytes.buffer;
+}
+async function ensurePresetBuffer(p, setP){
+  if(p._buf) return p._buf;
+  try{
+    setP(0.05, 'Loading song…');
+    const res = await fetch('songs/' + encodeURIComponent(p.file));
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    p._buf = await getAudioCtx().decodeAudioData(await res.arrayBuffer());
+    return p._buf;
+  }catch(e){ /* fall through to embedded data */ }
+  try{
+    setP(0.10, 'Loading embedded audio…');
+    await loadScriptFile('songs/' + p.id + '-data.js');
+    const uri = (window.__SONG_DATA || {})[p.id];
+    if(!uri) throw new Error('missing embedded data');
+    const b64 = uri.slice(uri.indexOf(',') + 1);
+    try{ delete window.__SONG_DATA[p.id]; }catch(_){}
+    setP(0.22, 'Decoding audio…');
+    p._buf = await getAudioCtx().decodeAudioData(b64ToArrayBuffer(b64));
+    return p._buf;
+  }catch(e2){
+    console.error(e2);
+    const err = new Error('unavailable');
+    err.friendly = 'Could not load "' + p.title + '". Pick Upload Music and choose the MP3 file instead.';
+    throw err;
+  }
+}
 
 /* ---------- build ---------- */
 async function buildTilesForCurrent(){
@@ -216,6 +217,32 @@ async function buildTilesForCurrent(){
   };
   setP(0.05, 'Preparing…');
   await new Promise(r=>setTimeout(r, 60));
+  if(!uploadedFile && currentPreset){
+    // bundled library song: fetch + decode once, then run the standard
+    // analysis/playback pipeline on the real audio (no synth placeholders)
+    if(!currentPreset._buf){
+      try{
+        await ensurePresetBuffer(currentPreset, setP);
+        currentPreset.duration = currentPreset._buf.duration;
+      }catch(err){
+        console.error(err);
+        const why = (err && err.friendly) ||
+          ('Could not load song file' + (err && err.message ? ' (' + err.message + ')' : '') + '.');
+        fileNameEl.textContent = why;
+        // leave the board in a clean empty state with an explanatory overlay
+        tiles = []; songDuration = 0;
+        pauseOffset = 0; resetGameState();
+        progBar.style.width = '0%';
+        progText.textContent = '0 / 0 seconds';
+        showOverlay('Song failed to load', currentPreset.title, why + ' Select another track or upload a file instead.');
+        row.style.display = 'none';
+        draw(0);
+        return;
+      }
+    }
+    customAudioBuffer = currentPreset._buf;
+    customName = currentPreset.title;
+  }
   if(customAudioBuffer){
     const NA = window.NocturneAnalysis;
     const offMs = parseInt(offsetSlider.value || '0', 10);
@@ -254,23 +281,23 @@ async function buildTilesForCurrent(){
     const conf = Math.round(res.confidence*100);
     detectLabel.textContent = `${res.bpm} BPM · ${res.tiles.length} notes`;
     customBadge.style.display = 'block';
-    customBadge.textContent = `Custom track · ${res.bpm} BPM · ${res.stats.rawOnsets} onsets → ${res.stats.acceptedEvents} events → ${res.tiles.length} tiles`;
+    customBadge.textContent = `${uploadedFile ? 'Custom track' : 'Library track'} · ${res.bpm} BPM · ${res.stats.rawOnsets} onsets → ${res.stats.acceptedEvents} events → ${res.tiles.length} tiles`;
     overlayKicker.textContent = 'Custom track · analysed';
     overlayTitle.textContent = customName || 'Your song';
     overlayDesc.textContent = `${res.bpm} BPM · ${res.tiles.length} notes. Press play.`;
     mastSong.textContent = (customName||'Custom') + ` — ${res.bpm} BPM`;
     drawDebugView();
+    if(!uploadedFile && currentPreset){
+      // store detected tempo on the library entry for the song list
+      currentPreset.bpm = res.bpm;
+      overlayKicker.textContent = 'Library track · analysed';
+      renderSongs();
+    }
     setP(1, 'Ready to play');
   } else {
-    tiles = generatePresetTiles(currentPreset).map(t=>({...t, time:t.time*chartTimeScale(), duration:(t.duration||0)*chartTimeScale()}));
-    songDuration = currentPreset.duration * chartTimeScale();
-    detectedBpm = currentPreset.bpm;
-    detectLabel.textContent = `${currentPreset.bpm} BPM · ${tiles.length} notes`;
-    overlayKicker.textContent = 'Ready';
-    overlayTitle.textContent = currentPreset.title;
-    overlayDesc.textContent = `${currentPreset.artist}. Press play.`;
-    mastSong.textContent = `${currentPreset.title} — ${currentPreset.bpm} BPM`;
-    setP(1, 'Ready');
+    fileNameEl.textContent = 'No song loaded.';
+    row.style.display = 'none';
+    return;
   }
   setTimeout(()=>{ row.style.display='none'; }, 500);
   pauseOffset = 0;
@@ -562,7 +589,7 @@ function draw(now=0){
   for(const t of activeTiles){
     if((t.hit && t.type==='tap') || t.missed) continue;
     const yH = g.keyTop - (t.time-cur)*pps;
-    const lh = t.type==='hold' ? (t.duration||0.5)*pps : Math.max(56*dpr, pps*0.14);
+    const lh = t.type==='hold' ? (t.duration||0.5)*pps : Math.max(150*dpr, pps*0.30);
     const yT = yH-lh;
     if(yH < -160*dpr || yT > h+80*dpr) continue;
     const hx0=g.center(t.lane,yH)-g.half(yH)+gap, hx1=g.center(t.lane,yH)+g.half(yH)-gap;
@@ -671,13 +698,6 @@ function loop(){
       else spawnFeedback(t.lane,'MISS','#c9a0a6');
     }
   }
-  // preset room tone: soft melody bed
-  if(!customAudioBuffer && isPlaying){
-    for(const t of activeTiles){
-      if(t._played) continue;
-      if(Math.abs(t.time-cur)<0.02 && !t.hit && !t.missed){ playPianoTone(t.midi, 0.4, 0.1); t._played=true; }
-    }
-  }
   draw(performance.now());
 }
 
@@ -724,6 +744,7 @@ $('#btnRetry').onclick = ()=>{ try{$('#resultDialog').close();}catch(e){} pauseO
 
 async function startGame(){
   if(tiles.length===0) await buildTilesForCurrent();
+  if(tiles.length===0 || !customAudioBuffer) return; // nothing loaded — stay on overlay
   if(isPlaying && !isPaused) return;
   hideOverlay();
   await doCountdown();
@@ -765,6 +786,7 @@ $('#btnLoadUrl').onclick = async ()=>{
 };
 function setCustomBuffer(decoded, name, objUrl){
   customAudioBuffer = decoded; customName = name;
+  uploadedFile = true;
   analysisCache = null; analysisFor = null; chartMeta = null; // force fresh analysis
   if(customObjectUrl && !String(customObjectUrl).startsWith('http')){ try{URL.revokeObjectURL(customObjectUrl);}catch(e){} }
   customObjectUrl = objUrl;
