@@ -424,8 +424,13 @@
      never by blind duplication: quiet sections stay sparse, dense sections
      bloom into doubles and occasional triples. Lane shapes carry pattern
      memory (runs, alternation, hand changes) so sequences feel intentional. */
-  var PAIRS = [[0, 1], [1, 2], [2, 3], [0, 2], [1, 3], [0, 3]];
+  // Hands: D,F (lanes 0,1) = left hand · J,K (lanes 2,3) = right hand.
+  // HARD RULE: no simultaneous pair may sit on one hand — D+F and J+K
+  // pairs are unplayable. Cross-hand pairs only (D+J, F+K, F+J, K+D).
+  // Triples always span both hands, so any 3-lane shape is legal.
+  var PAIRS = [[0, 2], [1, 3], [1, 2], [0, 3]];
   var TRIPLES = [[0, 1, 2], [1, 2, 3], [0, 1, 3], [0, 2, 3]]; // never all 4
+  function sameHand(a, b) { return (a < 2) === (b < 2); }
 
   function walkLane(rng, mem, gapPrev) {
     var prev = mem.lane, cand;
@@ -630,6 +635,14 @@
           var cut = live.slice(3);
           errors.push('repair ' + live.length + '-stack @' + fixed[live[0]].time.toFixed(3));
           drop = drop.concat(cut);
+        }
+        // same-hand 2-stack: keep the timing, move the weaker tile's lane
+        // to the free opposite hand (lane is presentation, timing is music)
+        if (live.length === 2 && sameHand(fixed[live[0]].lane, fixed[live[1]].lane)) {
+          var weak = (fixed[live[0]].str || 0) >= (fixed[live[1]].str || 0) ? live[1] : live[0];
+          var strongLane = fixed[live[0] === weak ? live[1] : live[0]].lane;
+          fixed[weak].lane = strongLane < 2 ? 2 : 1; // free lane on the other hand
+          errors.push('repair same-hand pair @' + fixed[weak].time.toFixed(3));
         }
         if (drop.length) {
           drop.sort(function (a, b) { return b - a; });

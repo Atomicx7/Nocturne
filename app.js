@@ -26,8 +26,7 @@ const statBest = $('#statBest'), statPerfect = $('#statPerfect'), statGood = $('
 const progBar = $('#progBar'), progText = $('#progText');
 
 const difficultySel = $('#difficulty');
-const speedSlider = $('#speedSlider'), speedVal = $('#speedVal');
-const widthSlider = $('#widthSlider'), widthVal = $('#widthVal');
+const levelNote = $('#levelNote');
 const holdNotesChk = $('#holdNotes');
 const pianoChk = $('#autoPlayDemo');
 const offsetSlider = $('#offsetSlider'), offsetVal = $('#offsetVal');
@@ -79,6 +78,14 @@ let keyFlash = [0,0,0,0];    // piano-key illumination 0..1 (decays in draw)
 let laneFlash = [0,0,0,0];   // miss feedback per lane 0..1 (decays in draw)
 let dust = [];               // ambient stage motes (normalized coords)
 let songDuration = 0;
+const LEVELS = {
+  easy:   {rate:0.82, label:'Easy · 82% tempo'},
+  normal: {rate:1.00, label:'Normal · original tempo'},
+  hard:   {rate:1.18, label:'Hard · 118% tempo'}
+};
+function level(){ return LEVELS[difficultySel.value] || LEVELS.normal; }
+function chartTimeScale(){ return 1 / level().rate; }
+function setLevelLabel(){ if(levelNote) levelNote.textContent = level().label; }
 for(let i=0;i<34;i++) dust.push({x:Math.random(), y:Math.random(), s:0.6+Math.random()*1.6, v:0.010+Math.random()*0.022, a:0.04+Math.random()*0.09});
 
 const LANE_MIDI = [60, 64, 67, 72];
@@ -135,9 +142,9 @@ function renderSongs(){
 function generatePresetTiles(preset){
   const diff = difficultySel.value;
   const beat = 60/preset.bpm;
-  const div = {easy:1, normal:2, hard:2, insane:4}[diff] || 2; // subdivisions per beat
+  const div = {easy:1, normal:2, hard:2}[diff] || 2; // subdivisions per beat
   const step = beat/div;
-  const skip = {easy:0.45, normal:0.22, hard:0.12, insane:0.06}[diff] ?? 0.22;
+  const skip = {easy:0.34, normal:0.22, hard:0.12}[diff] ?? 0.22;
   const out = [];
   // deterministic per preset+difficulty: same song, same chart
   let hs = 7;
@@ -164,7 +171,7 @@ function generatePresetTiles(preset){
       lane = (lane + 1 + Math.floor(rng()*2)) % 4;
     }
     const human = (rng()-0.5)*0.012; // ±12ms humanization
-    const isHold = holdNotesChk.checked && diff!=='easy' && rng() < 0.07 && (t < preset.duration-2);
+    const isHold = holdNotesChk.checked && rng() < (diff==='easy' ? 0.045 : 0.07) && (t < preset.duration-2);
     if(isHold){
       const d = beat*(1+Math.floor(rng()*2));
       out.push({time:t+human, lane, type:'hold', duration:Math.min(d, 1.4), midi:LANE_MIDI[lane]});
@@ -173,19 +180,17 @@ function generatePresetTiles(preset){
     } else {
       out.push({time:t+human, lane, type:'tap', midi:LANE_MIDI[lane]});
       // downbeat-driven chords (deterministic, pattern-based — never spam):
-      // downbeats bloom into doubles, strong downbeats into triples on insane
+      // Downbeats bloom into paired notes; Hard adds a few off-beat pairs.
+      // Cross-hand only: D,F = left hand · J,K = right hand, never D+F / J+K.
       const beatIdx = Math.round((t-1.0)/beat);
       const extra = [];
-      if(diff!=='easy' && beatIdx%4===0){
+      const oppHand = lane<2 ? [2,3] : [0,1];
+      if(beatIdx%4===0){
         let dl = seq[(idx+2)%seq.length];
-        if(dl===lane) dl = (dl+2)%4;
+        if(dl===lane || !oppHand.includes(dl)) dl = oppHand[Math.floor(rng()*2)];
         extra.push(dl);
-        if(diff==='insane' && rng()<0.3){
-          const tl = (dl+1+Math.floor(rng()*2))%4;
-          if(tl!==lane && tl!==dl) extra.push(tl);
-        }
-      } else if((diff==='hard'||diff==='insane') && beatIdx%2===1 && rng()<0.15){
-        extra.push([0,1,2,3].filter(l=>l!==lane)[Math.floor(rng()*3)]);
+      } else if(diff==='hard' && beatIdx%2===1 && rng()<0.15){
+        extra.push(oppHand[Math.floor(rng()*2)]);
       }
       for(const l2 of extra){
         out.push({time:t+human, lane:l2, type:'tap', midi:LANE_MIDI[l2]});
@@ -241,9 +246,9 @@ async function buildTilesForCurrent(){
       allowHolds: holdNotesChk.checked,
       offsetMs: offMs
     });
-    tiles = res.tiles;
+    tiles = res.tiles.map(t=>({...t, time:t.time*chartTimeScale(), duration:(t.duration||0)*chartTimeScale()}));
     chartMeta = res.meta;
-    songDuration = customAudioBuffer.duration;
+    songDuration = customAudioBuffer.duration * chartTimeScale();
     if(res.validation.warnings.length) console.warn('[chart]', res.validation.warnings);
     if(!res.validation.valid) console.error('[chart]', res.validation.errors);
     const conf = Math.round(res.confidence*100);
@@ -257,8 +262,8 @@ async function buildTilesForCurrent(){
     drawDebugView();
     setP(1, 'Ready to play');
   } else {
-    tiles = generatePresetTiles(currentPreset);
-    songDuration = currentPreset.duration;
+    tiles = generatePresetTiles(currentPreset).map(t=>({...t, time:t.time*chartTimeScale(), duration:(t.duration||0)*chartTimeScale()}));
+    songDuration = currentPreset.duration * chartTimeScale();
     detectedBpm = currentPreset.bpm;
     detectLabel.textContent = `${currentPreset.bpm} BPM · ${tiles.length} notes`;
     overlayKicker.textContent = 'Ready';
@@ -305,9 +310,10 @@ function startAudio(){
   if(customAudioBuffer){
     audioSource = ac.createBufferSource();
     audioSource.buffer = customAudioBuffer;
+    audioSource.playbackRate.value = level().rate;
     audioSource.connect(ac.destination);
     startTime = ac.currentTime - pauseOffset + 0.02;
-    try{ audioSource.start(0, Math.max(0,pauseOffset)); }catch(e){ audioSource.start(0); }
+    try{ audioSource.start(0, Math.max(0,pauseOffset * level().rate)); }catch(e){ audioSource.start(0); }
     audioSource.onended = ()=>{ if(isPlaying && !isPaused) endGame(false); };
   } else {
     presetStartPerf = performance.now() - pauseOffset*1000;
@@ -320,11 +326,13 @@ function startAudio(){
    terminates precisely above its own key. */
 function stageGeom(W,H){
   const keyH = H*0.20, keyTop = H-keyH;
-  const vpY = -H*0.32;
+  const vpY = -H*0.18;
+  // A wide keyboard and a narrower horizon make the lanes feel like one
+  // continuous piano roll, rather than four disconnected square columns.
   const spread = y => {
     let t = (y-vpY)/(keyTop-vpY);
     t = Math.min(1, Math.max(0, t));
-    return 0.40 + 0.60*t;
+    return 0.48 + 0.52*t;
   };
   return {
     W, H, keyH, keyTop, vpY, spread,
@@ -361,7 +369,7 @@ function tryHit(lane){
   if(!best){
     laneFlash[lane]=Math.max(laneFlash[lane],0.7);
     if(hudGrade){ hudGrade.textContent='MISS'; hudGrade.style.color='#ff6b7a'; }
-    if(currentMode==='arcade'){ hp=Math.max(0,hp-6); combo=0; updateHud(); spawnFeedback(lane,'MISS','#ff6b7a'); if(hp<=0) endGame(true); }
+    if(currentMode==='arcade'){ score=Math.max(0,score-20); combo=0; updateHud(); spawnFeedback(lane,'−20','#ff6b7a'); }
     else if(currentMode==='classic'){ combo=0; updateHud(); }
     return;
   }
@@ -371,7 +379,8 @@ const isDark = ()=>document.documentElement.dataset.theme!=='light';
 function handleHit(tile, grade){
   tile.hit = true;
   if(tile.type==='hold'){ tile.holding=true; holdState[tile.lane]=true; }
-  score += (grade==='perfect'?120:grade==='great'?100:65) + Math.floor(combo*3);
+  // Traditional Piano Tiles rewards a clean run without runaway combo values.
+  score += grade==='perfect' ? 10 : grade==='great' ? 7 : 4;
   combo++; if(combo>bestCombo) bestCombo=combo;
   if(grade==='perfect') perfect++; else if(grade==='great') great++; else good++;
   keyFlash[tile.lane]=1; // the piano key ignites as the tile lands in it
@@ -392,7 +401,6 @@ function handleHit(tile, grade){
     if(combo%25===0) hudCombo.animate([{transform:'scale(1.35)'},{transform:'scale(1)'}],{duration:200,easing:'ease-out'});
   }catch(_){}
   playPianoTone(tile.midi, 0.32, grade==='perfect'?0.42:grade==='great'?0.36:0.3);
-  if(currentMode==='arcade') hp=Math.min(100,hp+1.2);
   updateHud();
 }
 function releaseHold(lane){
@@ -402,13 +410,13 @@ function releaseHold(lane){
     if(t.lane!==lane || t.type!=='hold' || !t.holding || !t.hit) continue;
     const tail = t.time+(t.duration||0.5);
     if(now >= tail-0.18){
-      score += 80 + Math.floor(t.duration*40);
+      score += 5;
       spawnFeedback(lane,'HELD','#1f9d55');
       playPianoTone(t.midi+7, 0.16, 0.24);
     } else {
       combo=0; miss++;
       if(currentMode==='classic'){ t.holding=false; endGame(true); return; }
-      if(currentMode==='arcade'){ hp=Math.max(0,hp-12); if(hp<=0){ t.holding=false; endGame(true); return; } }
+      if(currentMode==='arcade') score=Math.max(0,score-30);
       spawnFeedback(lane,'EARLY','#e14b6a');
     }
     t.holding=false;
@@ -482,8 +490,11 @@ function draw(now=0){
   }
   // projected lane separators — brighter as they reach the keys
   ctx.lineWidth=1*dpr;
+  const topSpread = g.spread(0);
   for(let i=1;i<4;i++){
-    const xt=w/2+(i-1.5)*(w/4)*0.40, xb=w/4*i;
+    // i is a boundary (1..3), not a lane center.  This keeps every rail
+    // attached to its corresponding piano-key seam.
+    const xt=w/2+(i-2)*(w/4)*topSpread, xb=w/4*i;
     ctx.strokeStyle='rgba(240,217,168,.13)';
     ctx.beginPath(); ctx.moveTo(xt,0); ctx.lineTo(xb,g.keyTop); ctx.stroke();
     ctx.strokeStyle='rgba(240,217,168,.30)';
@@ -543,16 +554,15 @@ function draw(now=0){
   }
 
   const cur = getCurrentTime();
-  const speedMul = parseFloat(speedSlider.value);
-  const basePps = {easy:400, normal:540, hard:720, insane:920}[difficultySel.value] || 540;
-  const pps = basePps*speedMul*dpr;
+  const basePps = {easy:430, normal:560, hard:660}[difficultySel.value] || 560;
+  const pps = basePps*dpr;
   const gap = Math.max(2*dpr, w*0.006);
 
   // luminous glass tiles ride their lane's projection down into its key
   for(const t of activeTiles){
     if((t.hit && t.type==='tap') || t.missed) continue;
     const yH = g.keyTop - (t.time-cur)*pps;
-    const lh = t.type==='hold' ? (t.duration||0.5)*pps : Math.max(64*dpr, pps*0.15);
+    const lh = t.type==='hold' ? (t.duration||0.5)*pps : Math.max(56*dpr, pps*0.14);
     const yT = yH-lh;
     if(yH < -160*dpr || yT > h+80*dpr) continue;
     const hx0=g.center(t.lane,yH)-g.half(yH)+gap, hx1=g.center(t.lane,yH)+g.half(yH)-gap;
@@ -648,7 +658,7 @@ function loop(){
     if(t.hit || t.missed) continue;
     if(t.type==='hold' && t.holding){
       if(cur >= t.time+(t.duration||0.5)){
-        t.holding=false; score+=70; combo++; if(combo>bestCombo)bestCombo=combo;
+        t.holding=false; score+=5; combo++; if(combo>bestCombo)bestCombo=combo;
         perfect++; updateHud(); spawnFeedback(t.lane,'HELD','#1f9d55');
       }
       continue;
@@ -657,7 +667,7 @@ function loop(){
       t.missed=true; miss++; combo=0; laneFlash[t.lane]=Math.max(laneFlash[t.lane],0.8); updateHud();
       if(hudGrade){ hudGrade.textContent='MISS'; hudGrade.style.color='#ff6b7a'; }
       if(currentMode==='classic'){ spawnFeedback(t.lane,'MISS','#ff6b7a'); endGame(true); return; }
-      if(currentMode==='arcade'){ hp=Math.max(0,hp-13); spawnFeedback(t.lane,'MISS','#ff6b7a'); if(hp<=0){ endGame(true); return; } }
+      if(currentMode==='arcade'){ score=Math.max(0,score-30); spawnFeedback(t.lane,'−30','#ff6b7a'); updateHud(); }
       else spawnFeedback(t.lane,'MISS','#c9a0a6');
     }
   }
@@ -690,7 +700,7 @@ function endGame(failed){
   $('#resultKicker').textContent = failed?'Ended early':'Finished';
   $('#resultTitle').textContent = failed?'Out of tune':'A clean performance';
   $('#resultSub').textContent = failed
-    ? (currentMode==='classic'?'One miss ends a Classic run. Arcade forgives; Zen never judges.':`HP empty · rank ${rank}`)
+    ? (currentMode==='classic'?'One miss ends a Classic run. Arcade subtracts points; Zen never judges.':`Run ended · rank ${rank}`)
     : `${customName||currentPreset.title} · rank ${rank} · ${acc}%`;
   try{ $('#resultDialog').showModal(); }catch(e){}
   showOverlay(failed?'Out of tune':'Finished', customName||currentPreset.title, failed?'Restart and take it from the top.':'Lovely. Play again or choose another piece.');
@@ -821,15 +831,9 @@ $$('#modeSeg .seg-btn').forEach(b=> b.onclick=()=>{
 $$('#diffSeg .seg-btn').forEach(b=> b.onclick=()=>{
   $$('#diffSeg .seg-btn').forEach(x=>x.classList.remove('active')); b.classList.add('active');
   difficultySel.value=b.dataset.diff;
+  setLevelLabel();
   buildTilesForCurrent();
 });
-widthSlider.addEventListener('input', ()=>{
-  widthVal.textContent = widthSlider.value+'px';
-  gameFrame.style.width = widthSlider.value+'px';
-  // height stays CSS-driven (clamped to the viewport on PC) — canvas stretches
-  resizeCanvas(); draw(0);
-});
-speedSlider.addEventListener('input', ()=> speedVal.textContent = parseFloat(speedSlider.value).toFixed(2).replace(/0$/,'')+'×');
 holdNotesChk.addEventListener('change', ()=>buildTilesForCurrent());
 offsetSlider.addEventListener('input', ()=>{
   const v = parseInt(offsetSlider.value,10);
@@ -853,6 +857,14 @@ if($('#btnUpload2')) $('#btnUpload2').onclick = openPicker;
 if(keyHintsChk) keyHintsChk.addEventListener('change', ()=>draw(0));
 // mobile drawers
 const songsPanel = $('#songsPanel'), studioPanel = $('#studioPanel');
+$('#btnFoldSongs').onclick = ()=>{
+  songsPanel.classList.toggle('folded');
+  $('#btnFoldSongs').textContent = songsPanel.classList.contains('folded') ? '›' : '‹';
+};
+$('#btnFoldStudio').onclick = ()=>{
+  studioPanel.classList.toggle('folded');
+  $('#btnFoldStudio').textContent = studioPanel.classList.contains('folded') ? '‹' : '›';
+};
 if($('#btnSongs')) $('#btnSongs').onclick = ()=>{
   songsPanel.classList.toggle('open'); studioPanel.classList.remove('open');
 };
@@ -910,6 +922,7 @@ function drawDebugView(){
 
 /* ---------- init ---------- */
 renderSongs();
+setLevelLabel();
 buildTilesForCurrent();
 window.addEventListener('resize', ()=>{ resizeCanvas(); draw(0); });
 if(typeof ResizeObserver !== 'undefined'){

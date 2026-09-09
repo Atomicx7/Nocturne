@@ -84,6 +84,7 @@
 
   <!-- Songs -->
   <aside class="col col-songs" id="songsPanel">
+    <button class="panel-fold panel-fold-left" id="btnFoldSongs" aria-label="Collapse songs">‹</button>
     <p class="panel-label">♪ Songs</p>
     <div class="song-list" id="songList"></div>
     <p class="side-note" id="customBadge" style="display:none"></p>
@@ -91,6 +92,7 @@
 
   <!-- Studio -->
   <aside class="col col-studio" id="studioPanel">
+    <button class="panel-fold panel-fold-right" id="btnFoldStudio" aria-label="Collapse settings">›</button>
     <section class="panel">
       <p class="panel-label">♪ Your music</p>
       <label class="drop" id="dropzone">
@@ -119,16 +121,13 @@
         <button class="seg-btn" data-diff="easy">Easy</button>
         <button class="seg-btn active" data-diff="normal">Normal</button>
         <button class="seg-btn" data-diff="hard">Hard</button>
-        <button class="seg-btn" data-diff="insane">Insane</button>
       </div>
       <select id="difficulty" style="display:none">
         <option value="easy">Easy</option>
         <option value="normal" selected>Normal</option>
         <option value="hard">Hard</option>
-        <option value="insane">Insane</option>
       </select>
-      <label class="slider-row"><span>Speed <b id="speedVal">1.0×</b></span><input type="range" id="speedSlider" min="0.7" max="1.8" step="0.05" value="1.0"></label>
-      <label class="slider-row"><span>Tile Size <b id="widthVal">560px</b></span><input type="range" id="widthSlider" min="380" max="680" step="10" value="560"></label>
+      <p class="level-note" id="levelNote">Normal · original tempo</p>
       <label class="switch-row"><span>♪ Piano sounds</span><input type="checkbox" id="autoPlayDemo" checked><i></i></label>
       <label class="switch-row"><span>Key hints (D F J K)</span><input type="checkbox" id="keyHints" checked><i></i></label>
       <label class="switch-row"><span>Hold notes</span><input type="checkbox" id="holdNotes" checked><i></i></label>
