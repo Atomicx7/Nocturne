@@ -180,6 +180,22 @@ function b64ToArrayBuffer(b64){
   }
   return bytes.buffer;
 }
+/* Every track plays as a 1-minute run: longer audio is trimmed to 60s with
+   a smooth 3s fade-out baked into a copied buffer (never the user file).
+   Shorter tracks play whole. Analysis/playback downstream just see duration. */
+const SONG_CAP = 60, FADE_OUT = 3;
+function trimToMinute(buf){
+  if(!buf || buf.duration <= SONG_CAP + 0.5) return buf;
+  const sr = buf.sampleRate, len = Math.floor(SONG_CAP * sr);
+  const out = getAudioCtx().createBuffer(buf.numberOfChannels, len, sr);
+  const fade = Math.floor(FADE_OUT * sr);
+  for(let c=0;c<buf.numberOfChannels;c++){
+    const src = buf.getChannelData(c), dst = out.getChannelData(c);
+    dst.set(src.subarray(0, len));
+    for(let i=0;i<fade;i++){ const k=i/fade; dst[len-1-i] *= k*k; }
+  }
+  return out;
+}
 async function ensurePresetBuffer(p, setP){
   if(p._buf) return p._buf;
   try{
@@ -225,6 +241,7 @@ async function buildTilesForCurrent(){
     if(!currentPreset._buf){
       try{
         await ensurePresetBuffer(currentPreset, setP);
+        currentPreset._buf = trimToMinute(currentPreset._buf);
         currentPreset.duration = currentPreset._buf.duration;
       }catch(err){
         console.error(err);
@@ -800,11 +817,28 @@ function endGame(failed){
   stopAudio();
   if(loopRaf) cancelAnimationFrame(loopRaf);
   const acc = accuracy();
-  let rank='D';
-  if(acc>=98&&miss===0) rank='S+'; else if(acc>=95) rank='S';
-  else if(acc>=88) rank='A'; else if(acc>=75) rank='B'; else if(acc>=60) rank='C';
+  let rank='D', rankLabel='Warming up', rankCls='rD';
+  if(acc>=98&&miss===0){ rank='S+'; rankLabel='Flawless'; rankCls='rS'; }
+  else if(acc>=95){ rank='S'; rankLabel='Superstar'; rankCls='rS'; }
+  else if(acc>=88){ rank='A'; rankLabel='Excellent'; rankCls='rA'; }
+  else if(acc>=75){ rank='B'; rankLabel='Great groove'; rankCls='rB'; }
+  else if(acc>=60){ rank='C'; rankLabel='Solid'; rankCls='rC'; }
   $('#resScore').textContent=score.toLocaleString('en-US'); $('#resCombo').textContent=bestCombo;
-  $('#resAcc').textContent=acc.toFixed(1)+'%'; $('#resRank').textContent=rank;
+  $('#resAcc').textContent=acc.toFixed(1)+'%';
+  const rankEl=$('#resRank'); rankEl.textContent=rank; rankEl.className=rankCls;
+  $('#resRankLabel').textContent=rankLabel;
+  // judgment breakdown bars (share of all judged notes)
+  const totJ = perfect+great+good+miss || 1;
+  const fills=[['Perfect',perfect],['Great',great],['Good',good],['Miss',miss]];
+  fills.forEach(([k,v])=>{
+    $('#res'+k).textContent=v;
+    const bar=$('#bar'+k); if(bar) bar.style.width=(100*v/totJ).toFixed(1)+'%';
+  });
+  // all-time best (local)
+  let best=0; try{ best=parseInt(localStorage.getItem('nocturne-best')||'0',10)||0; }catch(e){}
+  const isBest = score>best;
+  if(isBest){ try{ localStorage.setItem('nocturne-best', String(score)); }catch(e){} }
+  $('#resBest').hidden = !isBest;
   $('#resultKicker').textContent = failed?'Ended early':'Finished';
   $('#resultTitle').textContent = failed?'Out of tune':'A clean performance';
   $('#resultSub').textContent = failed
@@ -812,22 +846,30 @@ function endGame(failed){
     : `${customName||currentPreset.title} · rank ${rank} · ${acc}%`;
   try{ $('#resultDialog').showModal(); }catch(e){}
   showOverlay(failed?'Out of tune':'Finished', customName||currentPreset.title, failed?'Restart and take it from the top.':'Lovely. Play again or choose another piece.');
-  $('#btnPlay').style.display='inline-block'; $('#btnPause').style.display='none';
+  $('#pauseMenu').classList.remove('open');
+  $('#btnPlay').style.display=''; $('#btnPause').style.display='none';
 }
 
 /* ---------- transport ---------- */
 $('#btnPlay').onclick = startGame;
 $('#overlayPlay').onclick = startGame;
-$('#btnPause').onclick = ()=>{
+function togglePause(){
   if(!isPlaying) return;
   if(isPaused){
-    isPaused=false; $('#btnPause').textContent='Pause';
+    isPaused=false; $('#btnPause').textContent='⏸';
+    $('#pauseMenu').classList.remove('open');
     if(customAudioBuffer) startAudio(); else presetStartPerf = performance.now()-pauseOffset*1000;
   } else {
-    pauseOffset=getCurrentTime(); isPaused=true; $('#btnPause').textContent='Resume'; stopAudio();
+    pauseOffset=getCurrentTime(); isPaused=true; $('#btnPause').textContent='▶'; stopAudio();
+    $('#pauseSong').textContent = customName||currentPreset.title;
+    $('#pauseMenu').classList.add('open');
   }
-};
-$('#btnRestart').onclick = ()=>{ pauseOffset=0; isPaused=false; stopAudio(); if(loopRaf)cancelAnimationFrame(loopRaf); isPlaying=false; resetGameState(); progBar.style.width='0%'; progText.textContent=`0 / ${Math.floor(songDuration)} seconds`; $('#btnPlay').style.display='inline-block'; $('#btnPause').style.display='none'; showOverlay('Ready', customName||currentPreset.title, 'Press play.'); draw(0); };
+}
+$('#btnPause').onclick = togglePause;
+$('#btnResume').onclick = togglePause;
+$('#btnRestart2').onclick = ()=>$('#btnRestart').click();
+$('#btnFull2').onclick = ()=>$('#btnFull').click();
+$('#btnRestart').onclick = ()=>{ pauseOffset=0; isPaused=false; stopAudio(); if(loopRaf)cancelAnimationFrame(loopRaf); isPlaying=false; resetGameState(); progBar.style.width='0%'; progText.textContent=`0 / ${Math.floor(songDuration)} seconds`; $('#pauseMenu').classList.remove('open'); $('#btnPlay').style.display=''; $('#btnPause').style.display='none'; showOverlay('Ready', customName||currentPreset.title, 'Press play.'); draw(0); };
 $('#btnRetry').onclick = ()=>{ try{$('#resultDialog').close();}catch(e){} pauseOffset=0; startGame(); };
 
 async function startGame(){
@@ -837,7 +879,8 @@ async function startGame(){
   hideOverlay();
   await doCountdown();
   isPlaying=true; isPaused=false;
-  $('#btnPlay').style.display='none'; $('#btnPause').style.display='inline-block'; $('#btnPause').textContent='Pause';
+  $('#pauseMenu').classList.remove('open');
+  $('#btnPlay').style.display='none'; $('#btnPause').style.display=''; $('#btnPause').textContent='⏸';
   getAudioCtx();
   if(pauseOffset===0) resetGameState();
   else activeTiles.forEach(t=>{ if(t.time>pauseOffset) t._played=false; });
@@ -873,13 +916,13 @@ $('#btnLoadUrl').onclick = async ()=>{
   }catch(e){ fileNameEl.textContent = 'Could not load URL — needs a direct audio link.'; }
 };
 function setCustomBuffer(decoded, name, objUrl){
-  customAudioBuffer = decoded; customName = name;
+  customAudioBuffer = trimToMinute(decoded); customName = name;
   uploadedFile = true;
   analysisCache = null; analysisFor = null; chartMeta = null; // force fresh analysis
   if(customObjectUrl && !String(customObjectUrl).startsWith('http')){ try{URL.revokeObjectURL(customObjectUrl);}catch(e){} }
   customObjectUrl = objUrl;
   try{ audioEl.src = objUrl; }catch(e){}
-  fileNameEl.textContent = `${name} · ${formatTime(decoded.duration)}`;
+  fileNameEl.textContent = `${name} · ${formatTime(customAudioBuffer.duration)}`;
   buildTilesForCurrent().then(renderSongs);
 }
 async function handleFile(file){
@@ -904,7 +947,7 @@ window.addEventListener('keydown', e=>{
   if(e.repeat || inField(e.target)) return;
   const k = e.key.toLowerCase();
   if(k in keyMap){ e.preventDefault(); const l=keyMap[k]; if(!keyActive[l]){ keyActive[l]=true; tryHit(l); } }
-  else if((k===' '||k==='enter') && window.__introDone && tourIdx<0){ e.preventDefault(); if(isPlaying) $('#btnPause').click(); else startGame(); }
+  else if((k===' '||k==='enter') && window.__introDone && tourIdx<0 && $('#modeHome').hidden){ e.preventDefault(); if(isPlaying) $('#btnPause').click(); else startGame(); }
   else if(k.startsWith('arrow')) e.preventDefault();
 });
 window.addEventListener('keyup', e=>{
@@ -934,10 +977,19 @@ canvas.addEventListener('pointercancel', endPointer);
 canvas.addEventListener('contextmenu', e=>e.preventDefault());
 
 /* ---------- panel wiring ---------- */
-$$('#modeSeg .seg-btn').forEach(b=> b.onclick=()=>{
-  $$('#modeSeg .seg-btn').forEach(x=>x.classList.remove('active')); b.classList.add('active');
-  currentMode=b.dataset.mode;
-});
+/* ---------- modes: home select, themes, switch-anywhere ---------- */
+const MODES = ['classic','arcade','zen'];
+function setMode(m, silent){
+  if(!MODES.includes(m)) m = 'arcade';
+  currentMode = m;
+  document.body.dataset.gamemode = m;
+  $$('.mode-pick .seg-btn').forEach(x=>x.classList.toggle('active', x.dataset.mode===m));
+  $$('#modeHome .mode-card').forEach(x=>x.classList.toggle('picked', x.dataset.mode===m));
+  try{ localStorage.setItem('nocturne-mode', m); }catch(e){}
+  if(!silent) draw(0);
+}
+$$('.mode-pick .seg-btn').forEach(b=> b.onclick=()=>{ setMode(b.dataset.mode); });
+try{ setMode(localStorage.getItem('nocturne-mode') || 'arcade', true); }catch(e){ setMode('arcade', true); }
 $$('#diffSeg .seg-btn').forEach(b=> b.onclick=()=>{
   $$('#diffSeg .seg-btn').forEach(x=>x.classList.remove('active')); b.classList.add('active');
   difficultySel.value=b.dataset.diff;
@@ -962,7 +1014,7 @@ function abortRunForChartUpdate(){
   stopAudio();
   if(loopRaf) cancelAnimationFrame(loopRaf);
   $('#btnPause').style.display='none';
-  $('#btnPlay').style.display='inline-block';
+  $('#btnPlay').style.display='';
 }
 if(btnTheme) btnTheme.onclick = ()=>{
   const next = isDark() ? 'light' : 'dark';
@@ -1099,8 +1151,8 @@ const TOUR_STEPS = [
   {title:'Pick a song', text:'Nine built-in tracks, analysed on-device into real beat-mapped charts. The BPM badge fills in once a song is analysed.', el:()=>{ const l=$('#songList'); return (l && l.firstElementChild) || $('#songsPanel'); }},
   {title:'Your music', text:'Drop any MP3, WAV, OGG or FLAC here — or paste a URL — and the game builds tiles from its actual rhythm. Nothing ever uploads.', sel:'#dropzone'},
   {title:'Tempo levels', text:'Easy plays at 82% tempo, Normal full speed, Hard 118%. Same chart, different tempo — holds included.', sel:'#diffSeg'},
-  {title:'Modes', text:'Classic ends on a single miss. Arcade forgives and subtracts points instead. Zen never judges.', sel:'#modeSeg'},
-  {title:'Ready?', text:'Press Play for the countdown, then play. Tap ⛶ anytime for fullscreen with the score on the board.', sel:'#overlayPlay', final:true},
+  {title:'Modes', text:'Classic ends on a single miss. Arcade forgives and subtracts points. Zen never judges. Switch anytime from the ⏸ pause menu or Studio settings.', sel:'#studioModeSeg'},
+  {title:'Ready?', text:'Press Play for the countdown, then play. Restart, pause and ⛶ fullscreen live in the top bar.', sel:'#overlayPlay', final:true},
 ];
 let tourIdx = -1;
 function tourTarget(st){
@@ -1134,6 +1186,9 @@ function positionTour(){
 function showTourStep(i){
   tourIdx = i;
   const st = TOUR_STEPS[i];
+  // phone fix: collapse both drawers first so a panel opened on a previous
+  // step can't cover the next target; tourTarget re-opens the one it needs
+  songsPanel.classList.remove('open'); studioPanel.classList.remove('open');
   let r = tourTarget(st);
   if(!r){ // target unavailable (tiny viewport etc.) → skip ahead, or finish
     if(i + 1 < TOUR_STEPS.length) return showTourStep(i + 1);
@@ -1160,6 +1215,12 @@ function showTourStep(i){
   if(cy + ch > innerHeight - 12) cy = Math.max(12, r.y - ch - 16);
   card.style.left = cx + 'px';
   card.style.top = cy + 'px';
+  // re-measure once next frame: drawers/panels animate open, so the first
+  // measurement can land mid-transition
+  if(!st._settled){
+    st._settled = true;
+    requestAnimationFrame(()=>{ st._settled = false; if(tourIdx===i) showTourStep(i); });
+  }
 }
 function startTour(){
   if(isPlaying || tourIdx >= 0) return;
@@ -1186,5 +1247,35 @@ if($('#tourSkip')) $('#tourSkip').onclick = ()=>endTour(false);
 if($('#btnTutePlay')) $('#btnTutePlay').onclick = ()=>{ try{ $('#tuteWelcome').close(); }catch(_){} startTour(); };
 if($('#btnTuteSkip')) $('#btnTuteSkip').onclick = ()=>{ tuteSet('skipped'); try{ $('#tuteWelcome').close(); }catch(_){} };
 if($('#btnTourReplay')) $('#btnTourReplay').onclick = ()=>{ try{ $('#howDialog').close(); }catch(_){} startTour(); };
+// mode select home: shown after the intro room fades, every launch
+function showModeHome(){
+  const last = currentMode;
+  $$('#modeHome .mode-card').forEach(c=>c.classList.toggle('picked', c.dataset.mode===last));
+  $('#modeHomeSub').textContent = 'Three ways to play the same piano. Last time: ' + last[0].toUpperCase() + last.slice(1) + ' — press 1, 2 or 3.';
+  $('#modeHome').hidden = false;
+  requestAnimationFrame(()=>$('#modeHome').classList.add('open'));
+}
+function hideModeHome(){
+  $('#modeHome').classList.remove('open');
+  $('#modeHome').hidden = true;
+}
+let toastT = null;
+function showToast(msg, ms=3600){
+  const t = $('#toast'); if(!t) return;
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove('show'), ms);
+}
+$$('#modeHome .mode-card').forEach(c=> c.onclick=()=>{
+  setMode(c.dataset.mode);
+  hideModeHome();
+  showToast('Mode set — change it anytime from the ⏸ pause menu or Studio settings.');
+  maybeShowTutorial();
+});
+document.addEventListener('keydown', e=>{
+  if($('#modeHome').hidden || inField(e.target)) return;
+  const map = {'1':'classic','2':'arcade','3':'zen'};
+  const m = map[e.key.toLowerCase()];
+  if(m){ const card = $$('#modeHome .mode-card').find(c=>c.dataset.mode===m); if(card) card.click(); }
+});
 // welcome first-timers once the intro room has faded
-if($('#enterBtn')) $('#enterBtn').addEventListener('click', ()=>setTimeout(maybeShowTutorial, 1200));
+if($('#enterBtn')) $('#enterBtn').addEventListener('click', ()=>setTimeout(showModeHome, 1200));

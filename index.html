@@ -32,7 +32,13 @@
   <div class="wordmark"><span class="wm-note">♩</span><span class="wm-name">Nocturne</span><span class="wm-tag">PIANO TILES</span></div>
   <div class="mast-song" id="mastSong">Pick a song to begin</div>
   <div class="mast-actions">
-    <button id="btnUpload" class="btn-upload">⇪ Upload Music</button>
+    <button id="btnUpload" class="btn-upload">⇪ <span>Upload Music</span></button>
+    <span class="nav-transport">
+      <button id="btnRestart" class="icon-btn" title="Restart">↻</button>
+      <button id="btnPause" class="icon-btn" title="Pause/Resume" style="display:none">⏸</button>
+      <button id="btnPlay" class="icon-btn accent" title="Play">▶</button>
+      <button id="btnFull" class="icon-btn" title="Fullscreen gameplay">⛶</button>
+    </span>
     <button id="btnHow" class="icon-btn" title="How to play">?</button>
     <button id="btnTheme" class="icon-btn" title="Toggle theme">☾</button>
     <button id="btnShare" class="icon-btn" title="Share score">⤴</button>
@@ -51,20 +57,6 @@
     </div>
     <div class="trackline"><div id="progBar"></div></div>
     <div class="trackmeta"><span id="progText">0 / 0 seconds</span><span id="detectLabel"></span></div>
-
-    <div class="board-toolbar board-toolbar-top">
-      <div class="seg" id="modeSeg">
-        <button class="seg-btn" data-mode="classic">Classic</button>
-        <button class="seg-btn active" data-mode="arcade">Arcade</button>
-        <button class="seg-btn" data-mode="zen">Zen</button>
-      </div>
-      <div class="board-btns">
-        <button id="btnRestart" class="mini-btn">Restart</button>
-        <button id="btnPause" class="mini-btn" style="display:none">Pause</button>
-        <button id="btnPlay" class="mini-btn accent">Play</button>
-        <button id="btnFull" class="mini-btn" title="Fullscreen gameplay">⛶</button>
-      </div>
-    </div>
 
     <div class="game-outer" id="gameOuter">
       <div class="game-frame" id="gameFrame">
@@ -85,6 +77,23 @@
         </div>
         <div class="countdown" id="countdown"></div>
         <div id="comboSplash" aria-hidden="true"></div>
+        <div class="pause-menu" id="pauseMenu">
+          <div class="pause-card">
+            <p class="ov-kicker">Paused</p>
+            <h2 id="pauseSong">—</h2>
+            <div class="seg mode-pick" id="pauseModeSeg">
+              <button class="seg-btn" data-mode="classic">Classic</button>
+              <button class="seg-btn" data-mode="arcade">Arcade</button>
+              <button class="seg-btn" data-mode="zen">Zen</button>
+            </div>
+            <div class="pause-actions">
+              <button class="play-btn" id="btnResume">Resume</button>
+              <button class="mini-btn" id="btnRestart2">Restart</button>
+              <button class="mini-btn" id="btnFull2">⛶</button>
+            </div>
+            <p class="ov-hint">Change modes anytime — here or in Studio</p>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -127,6 +136,12 @@
 
     <section class="panel">
       <p class="panel-label">⚙ Game Settings</p>
+      <p class="setup-cap">Mode</p>
+      <div class="seg wrap mode-pick" id="studioModeSeg">
+        <button class="seg-btn" data-mode="classic">Classic</button>
+        <button class="seg-btn" data-mode="arcade">Arcade</button>
+        <button class="seg-btn" data-mode="zen">Zen</button>
+      </div>
       <p class="setup-cap">Difficulty</p>
       <div class="seg wrap" id="diffSeg">
         <button class="seg-btn" data-diff="easy">Easy</button>
@@ -204,19 +219,40 @@
 
 <dialog id="resultDialog">
   <p class="ov-kicker" id="resultKicker">Finished</p>
+  <div class="rank-hero"><b id="resRank">C</b><span id="resRankLabel">Warming up</span></div>
+  <p class="new-best" id="resBest" hidden>★ New best score ★</p>
   <h2 id="resultTitle">Nice run</h2>
   <p class="res-sub" id="resultSub"></p>
   <div class="res-grid">
     <div><span>Score</span><b id="resScore">0</b></div>
-    <div><span>Combo</span><b id="resCombo">0</b></div>
+    <div><span>Max combo</span><b id="resCombo">0</b></div>
     <div><span>Accuracy</span><b id="resAcc">0%</b></div>
-    <div><span>Rank</span><b id="resRank">C</b></div>
+  </div>
+  <div class="judge-rows">
+    <div class="judge-row"><i class="dot perfect"></i><span>Perfect</span><div class="judge-bar"><div id="barPerfect"></div></div><b id="resPerfect">0</b></div>
+    <div class="judge-row"><i class="dot great"></i><span>Great</span><div class="judge-bar"><div id="barGreat"></div></div><b id="resGreat">0</b></div>
+    <div class="judge-row"><i class="dot good"></i><span>Good</span><div class="judge-bar"><div id="barGood"></div></div><b id="resGood">0</b></div>
+    <div class="judge-row"><i class="dot miss"></i><span>Miss</span><div class="judge-bar"><div id="barMiss"></div></div><b id="resMiss">0</b></div>
   </div>
   <div class="res-actions">
     <button class="play-btn" id="btnRetry">Play again</button>
-    <button class="mini-btn" onclick="this.closest('dialog').close()">Close</button>
+    <button class="mini-btn" onclick="this.closest('dialog').close()">Change song</button>
   </div>
 </dialog>
+
+<div id="modeHome" hidden>
+  <div class="mode-home-inner">
+    <p class="intro-kicker">Nocturne</p>
+    <h1>Choose your stage</h1>
+    <p class="mode-home-sub" id="modeHomeSub">Three ways to play the same piano.</p>
+    <div class="mode-cards">
+      <button class="mode-card" data-mode="classic"><b>Classic</b><span>One miss ends the run. Pure precision.</span><i>1 · sudden death</i></button>
+      <button class="mode-card" data-mode="arcade"><b>Arcade</b><span>Miss and lose points, never the run. Chase the score.</span><i>2 · forgiving</i></button>
+      <button class="mode-card" data-mode="zen"><b>Zen</b><span>No fail state. Just you and the music.</span><i>3 · no penalties</i></button>
+    </div>
+  </div>
+</div>
+<div id="toast" role="status"></div>
 
 <script src="audio-analysis.js"></script>
 <script src="intro.js"></script>
