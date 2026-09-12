@@ -425,6 +425,39 @@ function tryHit(lane){
   handleHit(best, bestD<=PERFECT_W ? 'perfect' : bestD<=GREAT_W ? 'great' : 'good');
 }
 const isDark = ()=>document.documentElement.dataset.theme!=='light';
+// Per-mode board palette: the whole 3D stage (tiles, glow, particles,
+// keys, lanes) re-themes with the selected mode. Classic stays champagne
+// gold, arcade burns red, zen runs mint-neon cyberpunk cyan.
+const PALETTES = {
+  classic: {
+    hit:'#f0d9a8', great:'#cfd8ea', good:'#8f887a',
+    glow:'240,200,120', line:'240,217,168',
+    tile:['rgba(188,158,108,.88)','rgba(240,220,175,.96)','#fff8e2'],
+    edge:'216,180,106',
+    hold:['rgba(91,67,145,.82)','rgba(151,115,218,.92)','#ead8ff'], holdEdge:'226,205,255',
+    key:['#fff3d0','#e8b64c'],
+    dust:'#f0d9a8', parts:['#f0d9a8','#d8b46a','#fff6e0'], glyph:'#d8b46a'
+  },
+  arcade: {
+    hit:'#ffb3ab', great:'#ffd0c2', good:'#8f887a',
+    glow:'255,77,94', line:'255,150,140',
+    tile:['rgba(190,90,80,.88)','rgba(255,150,135,.96)','#fff0ea'],
+    edge:'255,93,93',
+    hold:['rgba(150,40,70,.85)','rgba(230,70,110,.92)','#ffd9e2'], holdEdge:'255,120,150',
+    key:['#ffe3dc','#ff5d5d'],
+    dust:'#ff9a7a', parts:['#ff8a7a','#ff5d5d','#ffe9e2'], glyph:'#ff5d5d'
+  },
+  zen: {
+    hit:'#a8f4ff', great:'#d7f9ff', good:'#8f887a',
+    glow:'41,216,255', line:'141,243,255',
+    tile:['rgba(70,150,180,.88)','rgba(140,220,245,.96)','#eafcff'],
+    edge:'41,216,255',
+    hold:['rgba(30,110,140,.85)','rgba(60,190,230,.92)','#d9f7ff'], holdEdge:'141,243,255',
+    key:['#e2fbff','#29d8ff'],
+    dust:'#8df3ff', parts:['#8df3ff','#29d8ff','#eafcff'], glyph:'#29d8ff'
+  }
+};
+function pal(){ return PALETTES[currentMode] || PALETTES.classic; }
 function handleHit(tile, grade){
   tile.hit = true;
   if(tile.type==='hold'){ tile.holding=true; holdState[tile.lane]=true; }
@@ -435,15 +468,16 @@ function handleHit(tile, grade){
   keyFlash[tile.lane]=1; // the piano key ignites as the tile lands in it
   spawnParticles(tile.lane, grade);
   const g = stageGeom(canvas.width, canvas.height);
+  const P = pal();
   ripples.push({x:g.center(tile.lane, g.keyTop), y:g.keyTop, t:0, life:0.4,
-    col: grade==='perfect' ? '#f0d9a8' : 'rgba(240,217,168,.65)'});
-  const fcol = grade==='perfect' ? '#f0d9a8' : grade==='great' ? '#cfd8ea' : '#8f887a';
+    col: grade==='perfect' ? P.hit : `rgba(${P.line},.65)`});
+  const fcol = grade==='perfect' ? P.hit : grade==='great' ? P.great : P.good;
   spawnFeedback(tile.lane, grade.toUpperCase(), fcol);
   if(hudGrade){
     hudGrade.textContent = grade.toUpperCase();
-    hudGrade.style.color = grade==='perfect' ? '#f0d9a8' : grade==='great' ? '#cfd8ea' : '#8f887a';
+    hudGrade.style.color = fcol;
   }
-  if(Math.random()<0.3) spawnFeedback(tile.lane, Math.random()<0.5?'♪':'♫', '#d8b46a');
+  if(Math.random()<0.3) spawnFeedback(tile.lane, Math.random()<0.5?'♪':'♫', P.glyph);
   // score pop on perfects, combo pulse each 25
   try{
     if(grade==='perfect') hudScore.animate([{transform:'scale(1.22)'},{transform:'scale(1)'}],{duration:160,easing:'ease-out'});
@@ -479,7 +513,8 @@ function releaseHold(lane){
 function spawnParticles(lane, grade){
   const g = stageGeom(canvas.width, canvas.height);
   const x=g.center(lane, g.keyTop), y=g.keyTop-6;
-  const cols = grade==='perfect' ? ['#f0d9a8','#d8b46a','#fff6e0'] : ['#d8b46a','#8f887a','#f0d9a8'];
+  const P = pal();
+  const cols = grade==='perfect' ? P.parts : [P.glyph,'#8f887a',P.hit];
   for(let i=0;i<14;i++) particles.push({x, y, vx:(Math.random()-0.5)*310, vy:-Math.random()*330-55,
     life:0.42+Math.random()*0.34, t:0, col:cols[i%3], s:1.6+Math.random()*2.6});
 }
@@ -511,21 +546,18 @@ function updateHud(){
 // champagne → gold → amber → orange → rose → violet → ice. Bursts fire when
 // the combo ENTERS a tier (tracked via burstTier, reset with the combo),
 // so early game already feels alive without spamming every single hit.
-const COMBO_TIERS = [
-  {at:2,   color:'#ffffff', power:.14},
-  {at:3,   color:'#ffffff', power:.22},
-  {at:5,   color:'#e8e2d2', power:.32},
-  {at:8,   color:'#f0d9a8', power:.45},
-  {at:12,  color:'#ffd23f', power:.55},
-  {at:20,  color:'#ff9a3c', power:.7},
-  {at:35,  color:'#ff7a3c', power:.8},
-  {at:50,  color:'#ff5d7a', power:.9},
-  {at:100, color:'#c084fc', power:1},
-  {at:200, color:'#7df9ff', power:1},
-  {at:400, color:'#ffffff', power:1},
-];
+const TIER_AT = [2,3,5,8,12,20,35,50,100,200,400];
+const TIER_POWER = [.14,.22,.32,.45,.55,.7,.8,.9,1,1,1];
+// Combo reward ramp per mode: classic heats champagne→violet→ice,
+// arcade burns white→red→magenta, zen runs white→cyan→mint neon.
+const TIER_SETS = {
+  classic:['#ffffff','#ffffff','#e8e2d2','#f0d9a8','#ffd23f','#ff9a3c','#ff7a3c','#ff5d7a','#c084fc','#7df9ff','#ffffff'],
+  arcade:['#ffffff','#ffe9e2','#ffd0c2','#ffab8a','#ff6b5e','#ff3b57','#ff2e63','#ff5da2','#c84bff','#ff8a7a','#ffffff'],
+  zen:['#ffffff','#eaffff','#d7f9ff','#8df3ff','#29d8ff','#4dffa6','#00e5a0','#29d8ff','#8df3ff','#4dffa6','#ffffff']
+};
+function TIERS(){ return TIER_SETS[currentMode] || TIER_SETS.classic; }
 let burstTier = -1;
-function tierIndex(c){ let t = -1; for(let i = 0; i < COMBO_TIERS.length; i++) if(c >= COMBO_TIERS[i].at) t = i; return t; }
+function tierIndex(c){ let t = -1; for(let i = 0; i < TIER_AT.length; i++) if(c >= TIER_AT[i]) t = i; return t; }
 function hexA(hex, a){
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
@@ -534,7 +566,7 @@ function paintComboFX(){
   // drives the board aura + website background glow (see --cg in style.css)
   try{ document.body.style.setProperty('--cg', Math.min(1, combo/60).toFixed(3)); }catch(_){}
   const t = tierIndex(combo);
-  if(t > burstTier){ burstTier = t; comboBurst(COMBO_TIERS[t]); }
+  if(t > burstTier){ burstTier = t; comboBurst({color:TIERS()[t], power:TIER_POWER[t]}); }
   else if(t < burstTier) burstTier = t; // combo broke — silently re-arm
 }
 function comboBurst(tier){
@@ -586,11 +618,11 @@ function draw(now=0){
   bg.addColorStop(0,'#101013'); bg.addColorStop(0.6,'#080807'); bg.addColorStop(1,'#060606');
   ctx.fillStyle=bg; ctx.fillRect(0,0,w,h);
   const glow = ctx.createRadialGradient(w/2,h*0.05,10, w/2,h*0.05,w*0.6);
-  glow.addColorStop(0,'rgba(216,180,106,.14)'); glow.addColorStop(1,'rgba(216,180,106,0)');
+  glow.addColorStop(0,`rgba(${pal().glow},.14)`); glow.addColorStop(1,`rgba(${pal().glow},0)`);
   ctx.fillStyle=glow; ctx.fillRect(0,0,w,g.keyTop);
   // horizon haze where the lanes dissolve into light
   const haze = ctx.createRadialGradient(w/2,h*0.10,4, w/2,h*0.10,w*0.30);
-  haze.addColorStop(0,'rgba(240,217,168,.12)'); haze.addColorStop(1,'rgba(240,217,168,0)');
+  haze.addColorStop(0,`rgba(${pal().line},.12)`); haze.addColorStop(1,`rgba(${pal().line},0)`);
   ctx.fillStyle=haze; ctx.fillRect(0,0,w,h*0.3);
 
   // lane columns breathing in perspective
@@ -607,23 +639,23 @@ function draw(now=0){
     // i is a boundary (1..3), not a lane center.  This keeps every rail
     // attached to its corresponding piano-key seam.
     const xt=w/2+(i-2)*(w/4)*topSpread, xb=w/4*i;
-    ctx.strokeStyle='rgba(240,217,168,.13)';
+    ctx.strokeStyle=`rgba(${pal().line},.13)`;
     ctx.beginPath(); ctx.moveTo(xt,0); ctx.lineTo(xb,g.keyTop); ctx.stroke();
-    ctx.strokeStyle='rgba(240,217,168,.30)';
+    ctx.strokeStyle=`rgba(${pal().line},.30)`;
     ctx.beginPath(); ctx.moveTo((xt+xb)/2,g.keyTop/2); ctx.lineTo(xb,g.keyTop); ctx.stroke();
   }
   // pressed-lane wash + miss flash
   for(let i=0;i<4;i++){
-    if(keyActive[i]){ ctx.fillStyle='rgba(216,180,106,.10)'; laneQuad(g,i,0,g.keyTop); ctx.fill(); }
+    if(keyActive[i]){ ctx.fillStyle=`rgba(${pal().glow},.10)`; laneQuad(g,i,0,g.keyTop); ctx.fill(); }
     if(laneFlash[i]>0){ ctx.fillStyle=`rgba(255,80,95,${0.07*laneFlash[i]})`; laneQuad(g,i,0,g.keyTop); ctx.fill(); }
   }
   // soft diagonal light beams
-  ctx.fillStyle='rgba(240,217,168,.035)';
+  ctx.fillStyle=`rgba(${pal().line},.035)`;
   quad(w*0.08,0,w*0.30,0,w*0.16,g.keyTop,w*0.02,g.keyTop); ctx.fill();
   quad(w*0.92,0,w*0.70,0,w*0.84,g.keyTop,w*0.98,g.keyTop); ctx.fill();
   // drifting dust motes
   for(const m of dust){
-    ctx.globalAlpha=m.a; ctx.fillStyle='#f0d9a8';
+    ctx.globalAlpha=m.a; ctx.fillStyle=pal().dust;
     ctx.fillRect(m.x*w, m.y*g.keyTop, m.s*dpr, m.s*dpr);
   }
   ctx.globalAlpha=1;
@@ -633,7 +665,7 @@ function draw(now=0){
   const body=ctx.createLinearGradient(0,rimY,0,h);
   body.addColorStop(0,'#1e1e22'); body.addColorStop(0.2,'#0b0b0d'); body.addColorStop(1,'#000000');
   ctx.fillStyle=body; ctx.fillRect(0,rimY,w,h-rimY);
-  ctx.fillStyle='rgba(240,217,168,.22)'; ctx.fillRect(0,rimY,w,1.5*dpr);
+  ctx.fillStyle=`rgba(${pal().line},.22)`; ctx.fillRect(0,rimY,w,1.5*dpr);
 
   // four playable ivory keys — exactly one quarter of the piano each
   const showHints = !keyHintsChk || keyHintsChk.checked;
@@ -652,9 +684,9 @@ function draw(now=0){
     const glowA = Math.max(keyActive[i]?0.55:0, keyFlash[i]);
     if(glowA>0){
       ctx.save(); ctx.globalAlpha=Math.min(1,glowA);
-      ctx.shadowColor='rgba(240,200,120,.95)'; ctx.shadowBlur=24*dpr;
+      ctx.shadowColor=`rgba(${pal().glow},.95)`; ctx.shadowBlur=24*dpr;
       const kg=ctx.createLinearGradient(0,ky0,0,ky1);
-      kg.addColorStop(0,'#fff3d0'); kg.addColorStop(1,'#e8b64c');
+      kg.addColorStop(0,pal().key[0]); kg.addColorStop(1,pal().key[1]);
       ctx.fillStyle=kg; rr(kx0,ky0,kx1-kx0,ky1-ky0,5*dpr); ctx.fill();
       ctx.restore();
     }
@@ -700,18 +732,18 @@ function draw(now=0){
     }
     ctx.save();
     if(!t.hit && toHit>0 && toHit<0.25){
-      ctx.shadowColor='rgba(240,200,120,.9)'; ctx.shadowBlur=18*dpr*(1-toHit/0.25);
+      ctx.shadowColor=`rgba(${pal().glow},.9)`; ctx.shadowBlur=18*dpr*(1-toHit/0.25);
     }
     const tg=ctx.createLinearGradient(0,yT,0,yHc);
     if(t.type==='hold'){
-      tg.addColorStop(0,'rgba(91,67,145,.82)'); tg.addColorStop(.55,'rgba(151,115,218,.92)'); tg.addColorStop(1,'#ead8ff');
+      tg.addColorStop(0,pal().hold[0]); tg.addColorStop(.55,pal().hold[1]); tg.addColorStop(1,pal().hold[2]);
     } else {
-      tg.addColorStop(0,'rgba(188,158,108,.88)'); tg.addColorStop(0.45,'rgba(240,220,175,.96)'); tg.addColorStop(1,'#fff8e2');
+      tg.addColorStop(0,pal().tile[0]); tg.addColorStop(0.45,pal().tile[1]); tg.addColorStop(1,pal().tile[2]);
     }
     ctx.fillStyle=tg;
     quad(hx0,yHc,hx1,yHc,tx1,yT,tx0,yT); ctx.fill();
     ctx.restore();
-    ctx.strokeStyle = t.type==='hold' ? 'rgba(226,205,255,.98)' : 'rgba(216,180,106,.75)';
+    ctx.strokeStyle = t.type==='hold' ? `rgba(${pal().holdEdge},.98)` : `rgba(${pal().edge},.75)`;
     ctx.lineWidth = 1.5*dpr;
     quad(hx0,yHc,hx1,yHc,tx1,yT,tx0,yT); ctx.stroke();
     // bright strike edge where the tile meets its key
