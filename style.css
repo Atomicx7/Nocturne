@@ -238,7 +238,12 @@ body.stage-full .stage-hud{display:flex}
   .board-foot{display:none}
   .drawer-btns{display:flex;gap:8px;position:fixed;top:8px;left:8px;right:8px;z-index:50;justify-content:space-between;pointer-events:none}
   .drawer-btn{appearance:none;border:1px solid var(--gold);background:rgba(10,10,11,.94);color:var(--champ);border-radius:999px;padding:9px 16px;font:600 12px Inter;cursor:pointer;pointer-events:auto}
-  .drawer-theme{width:38px;padding:0;font-size:16px}
+  .drawer-btn.drawer-icon{width:38px;padding:9px 0;font-size:16px;flex:none}
+  @media(max-width:400px){
+    .drawer-btns{gap:6px}
+    .drawer-btn{padding:9px 12px;font-size:11px}
+    .drawer-btn.drawer-icon{width:34px}
+  }
   .col{display:none}
   .col.open{display:flex;position:fixed;z-index:40;inset:58px 10px 10px;background:var(--paper-2);border:1px solid var(--line);border-radius:16px;padding:22px 14px 14px;box-shadow:0 24px 70px rgba(0,0,0,.6);overflow:auto}
   .panel-close{display:grid;place-items:center;position:absolute;right:10px;top:8px;width:32px;height:32px;border:0;border-radius:50%;background:rgba(255,255,255,.07);color:var(--champ);font:400 25px/1 Inter;cursor:pointer;z-index:2}

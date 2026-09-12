@@ -901,6 +901,20 @@ $('#btnPause').onclick = togglePause;
 $('#btnResume').onclick = togglePause;
 $('#btnRestart2').onclick = ()=>$('#btnRestart').click();
 $('#btnFull2').onclick = ()=>$('#btnFull').click();
+if($('#btnSong2')) $('#btnSong2').onclick = ()=>{
+  // end the run and land on the ready screen with the song list open
+  $('#pauseMenu').classList.remove('open');
+  pauseOffset=0; isPlaying=false; isPaused=false;
+  stopAudio();
+  if(loopRaf) cancelAnimationFrame(loopRaf);
+  resetGameState();
+  progBar.style.width='0%';
+  progText.textContent=`0 / ${Math.floor(songDuration)} seconds`;
+  $('#btnPlay').style.display=''; $('#btnPause').style.display='none';
+  showOverlay('Ready', customName||currentPreset.title, 'Pick a track to play.');
+  $('#songsPanel').classList.add('open'); $('#studioPanel').classList.remove('open');
+  draw(0);
+};
 $('#btnRestart').onclick = ()=>{ pauseOffset=0; isPaused=false; stopAudio(); if(loopRaf)cancelAnimationFrame(loopRaf); isPlaying=false; resetGameState(); progBar.style.width='0%'; progText.textContent=`0 / ${Math.floor(songDuration)} seconds`; $('#pauseMenu').classList.remove('open'); $('#btnPlay').style.display=''; $('#btnPause').style.display='none'; showOverlay('Ready', customName||currentPreset.title, 'Press play.'); draw(0); };
 $('#btnRetry').onclick = ()=>{ try{$('#resultDialog').close();}catch(e){} pauseOffset=0; startGame(); };
 
@@ -1038,7 +1052,6 @@ const btnTheme = $('#btnTheme');
 function paintThemeBtn(){
   const icon = isDark() ? '☾' : '☀';
   if(btnTheme) btnTheme.textContent = icon;
-  if(btnMobileTheme) btnMobileTheme.textContent = icon;
 }
 function abortRunForChartUpdate(){
   if(!isPlaying && !isPaused) return;
@@ -1054,9 +1067,11 @@ if(btnTheme) btnTheme.onclick = ()=>{
   try{ localStorage.setItem('nocturne-theme', next); }catch(e){}
   paintThemeBtn(); draw(0); drawDebugView();
 };
-const btnMobileTheme = $('#btnMobileTheme');
-if(btnMobileTheme) btnMobileTheme.onclick = ()=>{ if(btnTheme) btnTheme.click(); };
 paintThemeBtn();
+// mobile drawer transport (masthead is hidden on phones): pause mirrors the
+// navbar button, home quits to the landing page
+if($('#btnDrawerPause')) $('#btnDrawerPause').onclick = ()=>$('#btnPause').click();
+if($('#btnDrawerHome')) $('#btnDrawerHome').onclick = goHome;
 // header + panel upload shortcuts open the file picker
 const openPicker = ()=>{ try{ fileInput.click(); }catch(e){} };
 if($('#btnUpload')) $('#btnUpload').onclick = openPicker;
@@ -1148,6 +1163,23 @@ function paintFsPause(){
   if(!b || !ref) return;
   b.style.display = ref.style.display;
   b.textContent = ref.textContent;
+  const dp = $('#btnDrawerPause');
+  if(dp) dp.textContent = ref.textContent;
+}
+function goHome(){
+  // quit any run and return to the landing (mode select) page
+  pauseOffset=0; isPlaying=false; isPaused=false;
+  stopAudio();
+  if(loopRaf) cancelAnimationFrame(loopRaf);
+  resetGameState();
+  progBar.style.width='0%';
+  progText.textContent=`0 / ${Math.floor(songDuration)} seconds`;
+  $('#pauseMenu').classList.remove('open');
+  try{ $('#resultDialog').close(); }catch(e){}
+  $('#btnPlay').style.display=''; $('#btnPause').style.display='none';
+  showOverlay('Ready', customName||currentPreset.title, 'Press play.');
+  showModeHome();
+  draw(0);
 }
 function paintFsBtn(){
   const t = $('#btnFull');
