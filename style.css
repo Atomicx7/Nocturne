@@ -133,6 +133,18 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;opacity:.5;
 .game-frame{position:relative;width:min(900px,100%);max-width:100%;height:clamp(520px,calc(100vh - 245px),820px);background:#050506;border-radius:14px;overflow:hidden;border:1px solid rgba(240,217,168,.22);box-shadow:0 30px 80px rgba(0,0,0,.7),0 0 60px rgba(216,180,106,.07);touch-action:none;user-select:none}
 @media(max-width:1180px){.game-frame{width:min(760px,100%);height:clamp(470px,calc(100vh - 270px),720px)}}
 .game-frame canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+/* ---------- Fullscreen stage ---------- */
+body.stage-full{overflow:hidden}
+body.stage-full .game-outer{position:fixed;inset:0;z-index:80;background:#050506;padding:0;margin:0;max-width:none}
+body.stage-full .game-frame{width:min(860px,100%) !important;height:100% !important;max-width:min(860px,100%);margin:0 auto;border-radius:0;border-left:1px solid rgba(240,217,168,.22);border-right:1px solid rgba(240,217,168,.22);border-top:0;border-bottom:0}
+.stage-hud{position:absolute;top:0;left:0;right:0;display:none;justify-content:space-between;align-items:flex-start;padding:14px 18px 0;z-index:6;pointer-events:none}
+body.stage-full .stage-hud{display:flex}
+.stage-score{display:flex;flex-direction:column;line-height:1.1;text-shadow:0 2px 14px rgba(0,0,0,.8)}
+#fsScore{font:800 34px var(--font);color:var(--ivory)}
+#fsCombo{font:600 13px Inter;color:var(--gold);letter-spacing:.12em;margin-top:2px}
+.stage-pause{pointer-events:auto;appearance:none;background:rgba(10,10,12,.55);border:1px solid rgba(240,217,168,.4);color:var(--ivory);border-radius:999px;padding:8px 20px;font:600 13px Inter;cursor:pointer;backdrop-filter:blur(6px)}
+.stage-pause:hover{border-color:var(--gold);color:var(--champ)}
+@media(max-width:640px){#fsScore{font-size:26px}.stage-hud{padding:10px 12px 0}}
 .hp-strip{display:none}
 .hp-strip>div{height:100%;width:100%;background:linear-gradient(90deg,var(--gold),var(--champ));transition:.3s}
 .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(5,5,6,.68);backdrop-filter:blur(8px);transition:.3s;z-index:4}
@@ -249,3 +261,48 @@ dialog ol{margin:0 0 16px 18px;padding:0;color:var(--muted);font-size:13.5px;lin
 .res-grid span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}
 .res-grid b{font-size:17px;font-family:var(--font)}
 .res-actions{display:flex;gap:8px;justify-content:center}
+
+/* ---------- Combo atmosphere (driven by --cg 0..1 from gameplay) ---------- */
+@property --cg{syntax:'<number>';inherits:true;initial-value:0}
+body{--cg:0}
+/* aura breathing around the board */
+.game-outer{position:relative}
+.game-outer::before{content:"";position:absolute;inset:-46px;pointer-events:none;z-index:0;
+  background:radial-gradient(closest-side,rgba(216,180,106,.30),transparent 72%);
+  opacity:var(--cg,0);transition:opacity .6s;filter:blur(12px)}
+.game-frame{transition:box-shadow .5s,border-color .5s}
+.game-frame.frame-flash{border-color:var(--gold);
+  box-shadow:0 0 0 2px var(--gold),0 0 70px rgba(216,180,106,.6),0 30px 80px rgba(0,0,0,.7)}
+/* website background edges wake up with the combo */
+.ambient{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:var(--cg,0);transition:opacity .8s;
+  background:
+    radial-gradient(620px 420px at 10% 88%,rgba(216,180,106,.12),transparent 70%),
+    radial-gradient(720px 460px at 90% 8%,rgba(216,180,106,.10),transparent 70%);
+  animation:ambientDrift 14s ease-in-out infinite alternate}
+@keyframes ambientDrift{from{transform:translateY(-14px)}to{transform:translateY(14px)}}
+/* full-screen edge pulse on combo milestones (color set per tier in JS) */
+#edgeFlash{position:fixed;inset:0;z-index:70;pointer-events:none;opacity:0;
+  box-shadow:inset 0 0 130px 34px rgba(216,180,106,.55)}
+/* center-board combo splash (text/color set per tier in JS) */
+#comboSplash{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;z-index:7;opacity:0;
+  font:800 clamp(40px,7vw,84px) var(--font);letter-spacing:.02em;white-space:nowrap;
+  text-shadow:0 0 30px currentColor,0 4px 18px rgba(0,0,0,.6)}
+
+/* ---------- First-run tutorial ---------- */
+#tourMask{position:fixed;inset:0;z-index:90}
+#tourMask[hidden]{display:none}
+#tourRing{position:fixed;border:2px solid var(--gold);border-radius:14px;pointer-events:none;
+  box-shadow:0 0 0 4000px rgba(3,3,5,.74),0 0 34px rgba(216,180,106,.65),inset 0 0 26px rgba(216,180,106,.14);
+  transition:top .35s ease,left .35s ease,width .35s ease,height .35s ease}
+#tourCard{position:fixed;width:min(340px,calc(100vw - 32px));background:#101012;color:var(--ink);
+  border:1px solid rgba(240,217,168,.35);border-radius:14px;padding:18px;box-shadow:0 24px 70px rgba(0,0,0,.75)}
+[data-theme="light"] #tourCard{background:#f4efe1}
+#tourCard h3{font-family:var(--font);font-size:18px;margin:0 0 6px;font-weight:800}
+#tourCard p{font-size:13px;color:var(--muted);line-height:1.55;margin:0 0 10px}
+.tour-kicker{margin:0 0 4px;font-size:9.5px;letter-spacing:.3em;text-transform:uppercase;color:var(--gold);font-weight:600}
+.tour-dots{display:flex;gap:6px;margin:2px 0 12px}
+.tour-dots span{width:22px;height:4px;border-radius:99px;background:rgba(255,255,255,.14)}
+[data-theme="light"] .tour-dots span{background:rgba(43,36,20,.15)}
+.tour-dots span.on{background:var(--gold)}
+.tour-actions{display:flex;gap:8px;align-items:center}
+.tour-actions .play-btn{padding:9px 22px;font-size:13px;margin-left:auto}

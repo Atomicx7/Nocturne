@@ -39,6 +39,8 @@
   </div>
 </header>
 
+<div class="ambient" id="ambient" aria-hidden="true"></div>
+<div id="edgeFlash" aria-hidden="true"></div>
 <main class="shell">
   <!-- Stage first in DOM so mobile leads with the game -->
   <section class="board-col">
@@ -60,13 +62,18 @@
         <button id="btnRestart" class="mini-btn">Restart</button>
         <button id="btnPause" class="mini-btn" style="display:none">Pause</button>
         <button id="btnPlay" class="mini-btn accent">Play</button>
+        <button id="btnFull" class="mini-btn" title="Fullscreen gameplay">⛶</button>
       </div>
     </div>
 
-    <div class="game-outer">
+    <div class="game-outer" id="gameOuter">
       <div class="game-frame" id="gameFrame">
         <canvas id="gameCanvas"></canvas>
         <div class="hp-strip"><div id="hpFill"></div></div>
+        <div class="stage-hud" id="stageHud">
+          <div class="stage-score"><span id="fsScore">0</span><span id="fsCombo">0×</span></div>
+          <button id="fsPause" class="stage-pause" style="display:none">Pause</button>
+        </div>
         <div class="overlay" id="overlay">
           <div class="overlay-card">
             <p class="ov-kicker" id="overlayKicker">Ready</p>
@@ -77,6 +84,7 @@
           </div>
         </div>
         <div class="countdown" id="countdown"></div>
+        <div id="comboSplash" aria-hidden="true"></div>
       </div>
     </div>
 
@@ -166,7 +174,33 @@
     <li>Hold the long tiles until their tail passes.</li>
   </ol>
   <button class="play-btn" onclick="this.closest('dialog').close()">Begin</button>
+  <button class="mini-btn" id="btnTourReplay" style="margin-left:8px">↻ Tutorial</button>
 </dialog>
+
+<dialog id="tuteWelcome">
+  <p class="ov-kicker">First visit</p>
+  <h2>Welcome to Nocturne 🎹</h2>
+  <p class="res-sub">New here? Take the 1-minute guided tour — the piano, songs, your own uploads and settings — then we'll drop you straight into an easy round.</p>
+  <div class="res-actions">
+    <button class="play-btn" id="btnTutePlay">▶ Play tutorial</button>
+    <button class="mini-btn" id="btnTuteSkip">Skip</button>
+  </div>
+</dialog>
+
+<div id="tourMask" hidden>
+  <div id="tourRing"></div>
+  <div id="tourCard" role="dialog" aria-label="Tutorial step">
+    <p class="tour-kicker" id="tourKicker">Step 1 of 7</p>
+    <h3 id="tourTitle"></h3>
+    <p id="tourText"></p>
+    <div class="tour-dots" id="tourDots"></div>
+    <div class="tour-actions">
+      <button class="mini-btn" id="tourBack">← Back</button>
+      <button class="mini-btn" id="tourSkip">Skip tour</button>
+      <button class="play-btn" id="tourNext">Next →</button>
+    </div>
+  </div>
+</div>
 
 <dialog id="resultDialog">
   <p class="ov-kicker" id="resultKicker">Finished</p>

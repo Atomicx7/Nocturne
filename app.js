@@ -50,6 +50,7 @@ function getAudioCtx(){
 }
 
 const PRESETS = [
+  {id:'interstellar', title:'Interstellar Theme', artist:'Piano', file:'Interstellar (Main Theme Piano) (320kbps).mp3', bpm:null, duration:null, _buf:null},
   {id:'heatwaves', title:'Heat Waves', artist:'Glass Animals · slowed + reverb', file:'glass animals - heat waves ( slowed to perfection + reverb ) (320kbps).mp3', bpm:null, duration:null, _buf:null},
   {id:'unstoppable', title:'Unstoppable', artist:'Sia', file:'Sia - Unstoppable (Official Video - Live from the Nostalgic For The Present Tour) (320 kbps).mp3', bpm:null, duration:null, _buf:null},
   {id:'aintworried', title:"I Ain't Worried", artist:'OneRepublic', file:'OneRepublic - I Ain\u2019t Worried (From \u201cTop Gun_ Maverick\u201d) [Official Music Video] (320kbps).mp3', bpm:null, duration:null, _buf:null},
@@ -57,7 +58,6 @@ const PRESETS = [
   {id:'wellerman', title:'Wellerman Remix', artist:'220 Kid × Billen Ted', file:'Wellerman (Sea Shanty _ 220 KID x Billen Ted Remix) _ Official Video (320kbps).mp3', bpm:null, duration:null, _buf:null},
   {id:'dadada', title:'Da Da Da (Jarico Remix)', artist:'VHWX Remastered', file:'[Da Da Da \u0414\u0430 \u0434\u0430 \u0434\u0430] Jarico Remix _ VHWX Remastered (320 kbps).mp3', bpm:null, duration:null, _buf:null},
   {id:'renai', title:'Renai Circulation', artist:'Namirin cover', file:'Renai Circulation\u300c\u604b\u611b\u30b5\u30fc\u30ad\u30e5\u30ec\u30fc\u30b7\u30e7\u30f3\u300d\u6b4c\u3063\u3066\u307f\u305f\u3010\uff0a\u306a\u307f\u308a\u3093\u3011 (320 kbps).mp3', bpm:null, duration:null, _buf:null},
-  {id:'interstellar', title:'Interstellar Theme', artist:'Piano', file:'Interstellar (Main Theme Piano) (320kbps).mp3', bpm:null, duration:null, _buf:null},
   {id:'ltheme', title:"L's Theme", artist:'Death Note BGM', file:'L Theme Ringtone \uff5c Death Note BGM Ringtone \uff5c Death Note Ringtone \uff5c Download Link ⬇️⬇️.mp3', bpm:null, duration:null, _buf:null},
 ];
 
@@ -432,6 +432,7 @@ function handleHit(tile, grade){
     if(grade==='perfect') hudScore.animate([{transform:'scale(1.22)'},{transform:'scale(1)'}],{duration:160,easing:'ease-out'});
     if(combo%25===0) hudCombo.animate([{transform:'scale(1.35)'},{transform:'scale(1)'}],{duration:200,easing:'ease-out'});
   }catch(_){}
+  // tier bursts fire inside updateHud → paintComboFX (covers hits; misses re-arm silently)
   playPianoTone(tile.midi, 0.32, grade==='perfect'?0.42:grade==='great'?0.36:0.3);
   updateHud();
 }
@@ -476,12 +477,74 @@ function accuracy(){
 function updateHud(){
   hudScore.textContent = score.toLocaleString('en-US');
   hudCombo.textContent = combo;
+  const fsS = $('#fsScore'), fsC = $('#fsCombo');
+  if(fsS) fsS.textContent = score.toLocaleString('en-US');
+  if(fsC) fsC.textContent = combo + '×';
   hudAcc.textContent = accuracy().toFixed(1)+'%';
   statBest.textContent = bestCombo;
   statPerfect.textContent = perfect;
   const sg = $('#statGreat'); if(sg) sg.textContent = great;
   statGood.textContent = good; statMiss.textContent = miss;
   hpFill.style.width = hp+'%';
+  paintComboFX();
+}
+
+/* ---------- combo atmosphere ---------- */
+// Escalating reward ladder: subtle white whisper at ×2, heating through
+// champagne → gold → amber → orange → rose → violet → ice. Bursts fire when
+// the combo ENTERS a tier (tracked via burstTier, reset with the combo),
+// so early game already feels alive without spamming every single hit.
+const COMBO_TIERS = [
+  {at:2,   color:'#ffffff', power:.14},
+  {at:3,   color:'#ffffff', power:.22},
+  {at:5,   color:'#e8e2d2', power:.32},
+  {at:8,   color:'#f0d9a8', power:.45},
+  {at:12,  color:'#ffd23f', power:.55},
+  {at:20,  color:'#ff9a3c', power:.7},
+  {at:35,  color:'#ff7a3c', power:.8},
+  {at:50,  color:'#ff5d7a', power:.9},
+  {at:100, color:'#c084fc', power:1},
+  {at:200, color:'#7df9ff', power:1},
+  {at:400, color:'#ffffff', power:1},
+];
+let burstTier = -1;
+function tierIndex(c){ let t = -1; for(let i = 0; i < COMBO_TIERS.length; i++) if(c >= COMBO_TIERS[i].at) t = i; return t; }
+function hexA(hex, a){
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+function paintComboFX(){
+  // drives the board aura + website background glow (see --cg in style.css)
+  try{ document.body.style.setProperty('--cg', Math.min(1, combo/60).toFixed(3)); }catch(_){}
+  const t = tierIndex(combo);
+  if(t > burstTier){ burstTier = t; comboBurst(COMBO_TIERS[t]); }
+  else if(t < burstTier) burstTier = t; // combo broke — silently re-arm
+}
+function comboBurst(tier){
+  const col = tier.color, p = tier.power;
+  // edge-of-screen pulse in the tier color
+  const f = $('#edgeFlash');
+  if(f){ try{ f.style.boxShadow = `inset 0 0 130px 34px ${hexA(col, .55)}`; f.animate([{opacity:0},{opacity:.25 + .65 * p, offset:.25},{opacity:0}],{duration:400 + 350 * p, easing:'ease-out'}); }catch(_){} }
+  // score slam scaled by tier (main HUD + fullscreen HUD)
+  const s = 1.1 + .45 * p;
+  [hudScore, $('#fsScore')].forEach(el=>{ if(!el) return; try{ el.animate([{transform:`scale(${s})`},{transform:'scale(1)'}],{duration:280 + 200 * p, easing:'cubic-bezier(.2,1.6,.4,1)'});}catch(_){} });
+  // board frame ignites in the tier color
+  const fr = $('#gameFrame');
+  if(fr){
+    fr.style.borderColor = col;
+    fr.style.boxShadow = `0 0 0 2px ${hexA(col, .9)}, 0 0 ${40 + 60 * p}px ${hexA(col, .55)}, 0 30px 80px rgba(0,0,0,.7)`;
+    clearTimeout(fr._flashT);
+    fr._flashT = setTimeout(()=>{ fr.style.borderColor = ''; fr.style.boxShadow = ''; }, 300 + 350 * p);
+  }
+  // center splash for the bigger moments
+  if(p >= .45) comboSplash(col);
+}
+function comboSplash(col){
+  const sp = $('#comboSplash');
+  if(!sp) return;
+  sp.textContent = combo + ' COMBO';
+  sp.style.color = col;
+  try{ sp.animate([{opacity:0, transform:'scale(.6)'},{opacity:1, transform:'scale(1.12)', offset:.3},{opacity:1, transform:'scale(1)', offset:.55},{opacity:0, transform:'scale(1.05)'}],{duration:750, easing:'ease-out'}); }catch(_){}
 }
 
 /* ---------- render: ivory board, ebony tiles ---------- */
@@ -599,45 +662,56 @@ function draw(now=0){
     // Constant tap length: scaling length with lane spread made far tiles
     // short and near tiles long, so tails visibly sped up and caught up.
     // Lane widths still taper with perspective; only length stays fixed.
-    const lh = t.type==='hold' ? (t.duration||0.5)*pps : Math.max(150*dpr, pps*0.42);
+    // Tap length follows lane width (not fixed px): tiles keep the same tall
+    // rectangle proportions at any board size instead of turning into flat
+    // slabs on wide screens. Holds stay duration-mapped.
+    const laneW = w/4-gap*2;
+    const lh = t.type==='hold' ? (t.duration||0.5)*pps : Math.max(150*dpr, laneW*1.1, pps*0.42);
     const yT = yH-lh;
     if(yH < -160*dpr || yT > h+80*dpr) continue;
-    const hx0=g.center(t.lane,yH)-g.half(yH)+gap, hx1=g.center(t.lane,yH)+g.half(yH)-gap;
+    // Tiles slide UNDER the piano keys: clamp the head at the key line so a
+    // tile can never paint over the keys. The struck key lights up instead
+    // (keyFlash + particles + impact ring fire on hit).
+    const yHc = Math.min(yH, g.keyTop);
+    if(yT >= yHc) continue; // fully consumed below the key line
+    const hx0=g.center(t.lane,yHc)-g.half(yHc)+gap, hx1=g.center(t.lane,yHc)+g.half(yHc)-gap;
     const tx0=g.center(t.lane,yT)-g.half(yT)+gap, tx1=g.center(t.lane,yT)+g.half(yT)-gap;
-    // contact shadow for 3D depth
-    ctx.fillStyle='rgba(0,0,0,.45)';
-    quad(hx0+4*dpr,yH+7*dpr,hx1+4*dpr,yH+7*dpr,tx1+4*dpr,yT+7*dpr,tx0+4*dpr,yT+7*dpr); ctx.fill();
+    // contact shadow for 3D depth (skipped once the head is under the keys)
+    if(yHc >= yH){
+      ctx.fillStyle='rgba(0,0,0,.45)';
+      quad(hx0+4*dpr,yHc+7*dpr,hx1+4*dpr,yHc+7*dpr,tx1+4*dpr,yT+7*dpr,tx0+4*dpr,yT+7*dpr); ctx.fill();
+    }
     ctx.save();
     if(!t.hit && toHit>0 && toHit<0.25){
       ctx.shadowColor='rgba(240,200,120,.9)'; ctx.shadowBlur=18*dpr*(1-toHit/0.25);
     }
-    const tg=ctx.createLinearGradient(0,yT,0,yH);
+    const tg=ctx.createLinearGradient(0,yT,0,yHc);
     if(t.type==='hold'){
       tg.addColorStop(0,'rgba(91,67,145,.82)'); tg.addColorStop(.55,'rgba(151,115,218,.92)'); tg.addColorStop(1,'#ead8ff');
     } else {
       tg.addColorStop(0,'rgba(188,158,108,.88)'); tg.addColorStop(0.45,'rgba(240,220,175,.96)'); tg.addColorStop(1,'#fff8e2');
     }
     ctx.fillStyle=tg;
-    quad(hx0,yH,hx1,yH,tx1,yT,tx0,yT); ctx.fill();
+    quad(hx0,yHc,hx1,yHc,tx1,yT,tx0,yT); ctx.fill();
     ctx.restore();
     ctx.strokeStyle = t.type==='hold' ? 'rgba(226,205,255,.98)' : 'rgba(216,180,106,.75)';
     ctx.lineWidth = 1.5*dpr;
-    quad(hx0,yH,hx1,yH,tx1,yT,tx0,yT); ctx.stroke();
-    // bright strike edge where the tile will meet its key
+    quad(hx0,yHc,hx1,yHc,tx1,yT,tx0,yT); ctx.stroke();
+    // bright strike edge where the tile meets its key
     ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=2.5*dpr;
-    ctx.beginPath(); ctx.moveTo(hx0+3*dpr,yH-3*dpr); ctx.lineTo(hx1-3*dpr,yH-3*dpr); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(hx0+3*dpr,yHc-3*dpr); ctx.lineTo(hx1-3*dpr,yHc-3*dpr); ctx.stroke();
     // diagonal glass shine
     ctx.fillStyle='rgba(255,255,255,.10)';
-    quad(hx0,yH,hx0+(hx1-hx0)*0.34,yH,tx0+(tx1-tx0)*0.22,yT,tx0,yT); ctx.fill();
+    quad(hx0,yHc,hx0+(hx1-hx0)*0.34,yHc,tx0+(tx1-tx0)*0.22,yT,tx0,yT); ctx.fill();
     if(t.type==='hold'){
       ctx.strokeStyle='rgba(255,255,255,.9)';
       ctx.lineWidth=Math.max(2*dpr,(hx1-hx0)*0.055);
       ctx.beginPath();
-      ctx.moveTo((hx0+hx1)/2,yH-8*dpr); ctx.lineTo((tx0+tx1)/2,yT+8*dpr);
+      ctx.moveTo((hx0+hx1)/2,yHc-8*dpr); ctx.lineTo((tx0+tx1)/2,yT+8*dpr);
       ctx.stroke();
       ctx.fillStyle='rgba(255,255,255,.86)';
       ctx.font=`700 ${Math.max(8,10*dpr)}px Inter, sans-serif`; ctx.textAlign='center';
-      ctx.fillText('HOLD', (hx0+hx1)/2, yH-(yH-yT)*0.32);
+      ctx.fillText('HOLD', (hx0+hx1)/2, yHc-(yHc-yT)*0.32);
     }
   }
   for(let i=particles.length-1;i>=0;i--){
@@ -830,7 +904,7 @@ window.addEventListener('keydown', e=>{
   if(e.repeat || inField(e.target)) return;
   const k = e.key.toLowerCase();
   if(k in keyMap){ e.preventDefault(); const l=keyMap[k]; if(!keyActive[l]){ keyActive[l]=true; tryHit(l); } }
-  else if((k===' '||k==='enter') && window.__introDone){ e.preventDefault(); if(isPlaying) $('#btnPause').click(); else startGame(); }
+  else if((k===' '||k==='enter') && window.__introDone && tourIdx<0){ e.preventDefault(); if(isPlaying) $('#btnPause').click(); else startGame(); }
   else if(k.startsWith('arrow')) e.preventDefault();
 });
 window.addEventListener('keyup', e=>{
@@ -982,3 +1056,135 @@ if(typeof ResizeObserver !== 'undefined'){
 }
 resizeCanvas(); draw(0);
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden && isPlaying && !isPaused) $('#btnPause').click(); });
+
+/* ---------- fullscreen stage ---------- */
+const gameOuter = $('#gameOuter');
+function paintFsPause(){
+  const b = $('#fsPause'), ref = $('#btnPause');
+  if(!b || !ref) return;
+  b.style.display = ref.style.display;
+  b.textContent = ref.textContent;
+}
+function paintFsBtn(){
+  const t = $('#btnFull');
+  if(t) t.textContent = document.body.classList.contains('stage-full') ? '✕' : '⛶';
+}
+async function setStageFull(on){
+  const want = on !== undefined ? on : !document.body.classList.contains('stage-full');
+  document.body.classList.toggle('stage-full', want);
+  paintFsBtn(); paintFsPause(); resizeCanvas(); draw(0);
+  if(want && gameOuter && gameOuter.requestFullscreen){
+    try{ await gameOuter.requestFullscreen(); }catch(e){ /* CSS-only fill still applies */ }
+  } else if(!want && document.fullscreenElement){
+    try{ await document.exitFullscreen(); }catch(e){}
+  }
+}
+// mirror pause/play visibility+label (covers pause toggle, start, restart, game over)
+new MutationObserver(paintFsPause).observe($('#btnPause'), {attributes:true, childList:true, subtree:true});
+document.addEventListener('fullscreenchange', ()=>{
+  document.body.classList.toggle('stage-full', !!document.fullscreenElement);
+  paintFsBtn(); paintFsPause(); resizeCanvas(); draw(0);
+});
+if($('#btnFull')) $('#btnFull').onclick = ()=>setStageFull();
+if($('#fsPause')) $('#fsPause').onclick = ()=>$('#btnPause').click();
+paintFsBtn(); paintFsPause();
+
+/* ---------- first-run tutorial ---------- */
+const TUTE_KEY = 'nocturne-tutorial';
+const tuteDone = ()=>{ try{ return !!localStorage.getItem(TUTE_KEY); }catch(_){ return true; } };
+const tuteSet = v=>{ try{ localStorage.setItem(TUTE_KEY, v); }catch(_){} };
+const TOUR_STEPS = [
+  {title:'Your piano', text:'Tiles fall down four glowing lanes. Each lane ends on its own piano key — strike the tile exactly as it lands.', sel:'#gameFrame'},
+  {title:'How to strike', text:'Desktop: D F J K or arrow keys. Mobile: tap the keys themselves. A gold key-flash plus burst means PERFECT. Long tiles: hold until the tail passes.', rect:()=>{ const r=$('#gameFrame').getBoundingClientRect(); return {x:r.x, y:r.y+r.height*0.58, width:r.width, height:r.height*0.42}; }},
+  {title:'Pick a song', text:'Nine built-in tracks, analysed on-device into real beat-mapped charts. The BPM badge fills in once a song is analysed.', el:()=>{ const l=$('#songList'); return (l && l.firstElementChild) || $('#songsPanel'); }},
+  {title:'Your music', text:'Drop any MP3, WAV, OGG or FLAC here — or paste a URL — and the game builds tiles from its actual rhythm. Nothing ever uploads.', sel:'#dropzone'},
+  {title:'Tempo levels', text:'Easy plays at 82% tempo, Normal full speed, Hard 118%. Same chart, different tempo — holds included.', sel:'#diffSeg'},
+  {title:'Modes', text:'Classic ends on a single miss. Arcade forgives and subtracts points instead. Zen never judges.', sel:'#modeSeg'},
+  {title:'Ready?', text:'Press Play for the countdown, then play. Tap ⛶ anytime for fullscreen with the score on the board.', sel:'#overlayPlay', final:true},
+];
+let tourIdx = -1;
+function tourTarget(st){
+  if(st.rect){ try{ const r = st.rect(); if(r && r.width > 4 && r.height > 4) return r; }catch(_){} return null; }
+  const el = typeof st.el === 'function' ? st.el() : $(st.sel);
+  if(!el) return null;
+  // open collapsed containers so the target can be measured
+  const songs = el.closest && el.closest('#songsPanel');
+  const studio = el.closest && el.closest('#studioPanel');
+  if(songs){
+    if(songs.classList.contains('folded')) $('#btnFoldSongs')?.click();
+    if(getComputedStyle(songs).display === 'none') $('#btnSongs')?.click();
+  }
+  if(studio){
+    if(studio.classList.contains('folded')) $('#btnFoldStudio')?.click();
+    if(getComputedStyle(studio).display === 'none') $('#btnStudio')?.click();
+  }
+  try{ el.scrollIntoView({block:'nearest'}); }catch(_){}
+  const r = el.getBoundingClientRect();
+  if(r.width < 4 || r.height < 4) return null;
+  return r;
+}
+function buildDots(){
+  const d = $('#tourDots'); if(!d) return; d.innerHTML = '';
+  TOUR_STEPS.forEach((_, i)=>{ const s = document.createElement('span'); if(i === tourIdx) s.classList.add('on'); d.appendChild(s); });
+}
+function positionTour(){
+  if(tourIdx < 0) return;
+  showTourStep(tourIdx);
+}
+function showTourStep(i){
+  tourIdx = i;
+  const st = TOUR_STEPS[i];
+  let r = tourTarget(st);
+  if(!r){ // target unavailable (tiny viewport etc.) → skip ahead, or finish
+    if(i + 1 < TOUR_STEPS.length) return showTourStep(i + 1);
+    return endTour(true);
+  }
+  const pad = 10;
+  const ring = $('#tourRing');
+  ring.style.left = Math.max(4, r.x - pad) + 'px';
+  ring.style.top = Math.max(4, r.y - pad) + 'px';
+  ring.style.width = (r.width + pad * 2) + 'px';
+  ring.style.height = (r.height + pad * 2) + 'px';
+  $('#tourKicker').textContent = `Step ${i + 1} of ${TOUR_STEPS.length}`;
+  $('#tourTitle').textContent = st.title;
+  $('#tourText').textContent = st.text;
+  buildDots();
+  $('#tourBack').style.visibility = i === 0 ? 'hidden' : 'visible';
+  $('#tourNext').textContent = st.final ? 'Start playing 🎹' : 'Next →';
+  const card = $('#tourCard');
+  const cw = Math.min(340, innerWidth - 24);
+  card.style.width = cw + 'px';
+  const ch = card.offsetHeight;
+  let cx = Math.min(Math.max(12, r.x), innerWidth - cw - 12);
+  let cy = r.y + r.height + 16;
+  if(cy + ch > innerHeight - 12) cy = Math.max(12, r.y - ch - 16);
+  card.style.left = cx + 'px';
+  card.style.top = cy + 'px';
+}
+function startTour(){
+  if(isPlaying || tourIdx >= 0) return;
+  $('#tourMask').hidden = false;
+  showTourStep(0);
+  window.addEventListener('resize', positionTour);
+}
+function endTour(finished){
+  $('#tourMask').hidden = true;
+  tourIdx = -1;
+  window.removeEventListener('resize', positionTour);
+  if(finished){
+    tuteSet('done');
+    if(!isPlaying){ try{ $('#overlayPlay').click(); }catch(_){} }
+  } else tuteSet('skipped');
+}
+function maybeShowTutorial(){
+  if(tuteDone() || isPlaying || tourIdx >= 0) return;
+  try{ $('#tuteWelcome').showModal(); }catch(_){}
+}
+if($('#tourNext')) $('#tourNext').onclick = ()=>{ if(tourIdx >= TOUR_STEPS.length - 1) endTour(true); else showTourStep(tourIdx + 1); };
+if($('#tourBack')) $('#tourBack').onclick = ()=>{ if(tourIdx > 0) showTourStep(tourIdx - 1); };
+if($('#tourSkip')) $('#tourSkip').onclick = ()=>endTour(false);
+if($('#btnTutePlay')) $('#btnTutePlay').onclick = ()=>{ try{ $('#tuteWelcome').close(); }catch(_){} startTour(); };
+if($('#btnTuteSkip')) $('#btnTuteSkip').onclick = ()=>{ tuteSet('skipped'); try{ $('#tuteWelcome').close(); }catch(_){} };
+if($('#btnTourReplay')) $('#btnTourReplay').onclick = ()=>{ try{ $('#howDialog').close(); }catch(_){} startTour(); };
+// welcome first-timers once the intro room has faded
+if($('#enterBtn')) $('#enterBtn').addEventListener('click', ()=>setTimeout(maybeShowTutorial, 1200));
